@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Environment
+.env
+
+# Runtime data
+cache/
+tests/fixtures/
+
+# Reference repo (own git history, read-only per AGENTS.md)
+example/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Test artifacts
+.pytest_cache/

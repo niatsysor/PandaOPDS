@@ -1,0 +1,29 @@
+services:
+  ehopds:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"   # bind to loopback; expose via reverse proxy
+    environment:
+      # --- E-Hentai identity (required) ---
+      IPB_MEMBER_ID: ${IPB_MEMBER_ID:?set in .env}
+      IPB_PASS_HASH: ${IPB_PASS_HASH:?set in .env}
+      # IGNEOUS: ${IGNEOUS:-}          # optional seed; exhentai sets its own igneous on session
+      EH_SITE: ${EH_SITE:-e-hentai}
+      # --- site behaviour flags ---
+      NW: ${NW:-1}
+      DATATAGS: ${DATATAGS:-1}
+      # --- URLs ---
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}   # e.g. https://opds.example.com
+      # --- caching ---
+      CACHE_DIR: /data/cache
+      CACHE_MAX_GB: ${CACHE_MAX_GB:-4}
+      IMAGE_CACHE_ENABLED: ${IMAGE_CACHE_ENABLED:-true}
+      # --- throttling ---
+      HTML_INTERVAL_SECONDS: ${HTML_INTERVAL_SECONDS:-1.5}
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-2}
+    volumes:
+      - cache-data:/data/cache
+
+volumes:
+  cache-data:

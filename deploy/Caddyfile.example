@@ -1,0 +1,17 @@
+# Caddy reverse proxy example for EHOPDS.
+# Automatic TLS via Let's Encrypt. Requires PUBLIC_BASE_URL=https://opds.example.com
+# in the EHOPDS environment.
+
+opds.example.com {
+    reverse_proxy 127.0.0.1:8000 {
+        # pass the original Host through
+        header_up Host {host}
+    }
+
+    encode zstd gzip
+
+    # basic access protection (optional): basic auth or a firewall rule
+    # basic_auth {
+    #     reader $2a$14$...
+    # }
+}
