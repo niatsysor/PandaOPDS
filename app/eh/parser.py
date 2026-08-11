@@ -23,6 +23,8 @@ from .models import (
     GalleryThumbnail,
     GalleryUrl,
     ImagePageInfo,
+    TagStyle,
+    tag_status_from_class,
 )
 
 # /g/{gid}/{token}/  (also matches /mpv/{gid}/{token}/)
@@ -46,6 +48,7 @@ _LIST_CONTAINERS = [
     ".itg.glte tr",         # Extended
     ".itg.gltm tr",         # Minimal
 ]
+_LIST_VIEWS = ["thumbnail", "compact", "extended", "minimal"]
 # Cover selectors per view, tried in order (data-src preferred, src fallback)
 _COVER_SELECTORS = [
     ".gl3t > a > img",          # Thumbnail
@@ -94,13 +97,112 @@ def parse_gallery_href(href: str) -> GalleryUrl | None:
     return GalleryUrl(gid=int(m.group(1)), token=m.group(2))
 
 
+def _parse_tag_style(style: str) -> TagStyle | None:
+    """Extract color/border-color/background from an inline style string.
+
+    Featured (voted-up) tags carry e.g.
+      `color:#f1f1f1;border-color:#048751;background:radial-gradient(#048751,#24A771) !important`
+    Values are passed through verbatim minus `!important`; a style with none of
+    the three keys yields None (plain tag).
+    """
+    if not style:
+        return None
+    st = TagStyle()
+    m = re.search(r"color:\s*([^;]+)", style)
+    if m:
+        st.color = m.group(1).strip()
+    m = re.search(r"border-color:\s*([^;]+)", style)
+    if m:
+        st.border_color = m.group(1).strip()
+    m = re.search(r"background:\s*([^;]+)", style)
+    if m:
+        st.background = m.group(1).strip().removesuffix(" !important").strip()
+    if not (st.color or st.border_color or st.background):
+        return None
+    return st
+
+
+def _parse_list_tags(row: Any, view: str) -> list[GalleryTag]:
+    """Parse tag divs from one list row.
+
+    Tag divs carry `title="namespace:key"` and class `gt`/`gtl`/`gtw`; featured
+    (voted-up) tags additionally carry an inline style. Layout dependent:
+    compact/extended show the full tag set, thumbnail shows only featured tags,
+    minimal shows none. Aligns with JHenTai `_parseCompactGalleryTags` /
+    `_parseExtendedGalleryTags` (verified on real compact pages).
+    """
+    if view == "compact":
+        divs = _el(row, "div.gt[title], div.gtl[title], div.gtw[title]")
+    elif view == "extended":
+        # JHenTai selector minus <tbody> (real pages have none; lxml adds none)
+        divs = _el(
+            row,
+            ".gl2e > div > a > div > div:nth-child(1) > table > tr > td > div[title]",
+        )
+    else:
+        return []
+    out: list[GalleryTag] = []
+    for div in divs:
+        title = _attr(div, "title")
+        if not title:
+            continue
+        parts = title.split(":", 1)
+        namespace = parts[0].strip() if len(parts) == 2 and parts[0].strip() else "temp"
+        key = parts[1].strip() if len(parts) == 2 else title.strip()
+        out.append(
+            GalleryTag(
+                namespace=namespace,
+                key=key,
+                status=tag_status_from_class(_attr(div, "class")),
+                style=_parse_tag_style(_attr(div, "style")),
+            )
+        )
+    return out
+
+
+def _parse_detail_tags(root: Any) -> list[GalleryTag]:
+    """Parse the #taglist block (full tag set, status + inline style).
+
+    Verified structure on real pages:
+      <div id="taglist"><table><tr>
+        <td class="tc">parody:</td>
+        <td><div id="td_parody:zenless_zone_zero" class="gtl" style="...">
+              <a id="ta_parody:zenless_zone_zero" ...>zenless zone zero</a>
+            </div></td></tr>...</table></div>
+    id forms: `td_<namespace>:<key>` (underscores in key) or `td_<key>` (temp).
+    """
+    out: list[GalleryTag] = []
+    for div in _el(root, "#taglist table tr > td:nth-child(2) > div[id]"):
+        tag_id = _attr(div, "id")
+        if not tag_id:
+            continue
+        parts = tag_id.split(":", 1)
+        if len(parts) == 2:
+            namespace = parts[0].removeprefix("td_").strip() or "temp"
+            key = parts[1].replace("_", " ").strip()
+        else:
+            namespace = "temp"
+            key = tag_id.removeprefix("td_").replace("_", " ").strip()
+        if not key:
+            continue
+        out.append(
+            GalleryTag(
+                namespace=namespace,
+                key=key,
+                status=tag_status_from_class(_attr(div, "class")),
+                style=_parse_tag_style(_attr(div, "style")),
+            )
+        )
+    return out
+
+
 def _parse_cover_url(img: Any | None) -> str:
     if img is None:
         return ""
     return _attr(img, "data-src") or _attr(img, "src")
 
 
-def _parse_list_item(row: Any) -> GalleryListItem | None:
+def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
     """Extract a gallery entry from one list-page row (any of the 4 views)."""
     # First anchor whose href points at a gallery page.
     gallery_url: GalleryUrl | None = None
@@ -141,6 +243,7 @@ def _parse_list_item(row: Any) -> GalleryListItem | None:
         cover_url=cover_url,
         page_count=page_count,
         is_expunged=is_expunged,
+        tags=_parse_list_tags(row, view),
     )
 
 
@@ -200,7 +303,7 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
     doc = html.fromstring(html_text)
 
     galleries: list[GalleryListItem] = []
-    for container in _LIST_CONTAINERS:
+    for view, container in zip(_LIST_VIEWS, _LIST_CONTAINERS):
         rows = _el(doc, container)
         if not rows:
             continue
@@ -208,7 +311,7 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
             # skip ad rows / header rows (only 1 child or contains <th>)
             if len(row) == 1 or _first(row, "th") is not None:
                 continue
-            item = _parse_list_item(row)
+            item = _parse_list_item(row, view)
             if item is not None:
                 galleries.append(item)
         break  # only the first matching view layout is used
@@ -221,17 +324,36 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
         m = re.search(r"(?:next|prev)=([\d-]+)", href or "")
         return int(m.group(1)) if m else None
 
+    def _nav_page() -> int | None:
+        """Ranklist/toplist pages use `.ptt` page-number pagination (`?p=`)
+        and have no `#unext` lastGid link. Aligns with JHenTai
+        `_ranklistPageDocument2NextPageIndex`: next page number comes from the
+        last `<td>` of the `.ptt` row.
+        """
+        tr = _first(doc, ".ptt tr")
+        if tr is None:
+            return None
+        tds = list(tr)  # direct children of the row are the <td>s
+        if not tds:
+            return None
+        a = _first(tds[-1], "a")
+        m = re.search(r"p(?:age)?=(\d+)", _attr(a, "href") or "")
+        return int(m.group(1)) if m else None
+
     total_count: int | None = None
     search_text = _text(_first(doc, ".searchtext"))
     m = re.search(r"([\d,]+)\+?", search_text or "")
     if m and "hundreds" not in search_text and "thousands" not in search_text:
         total_count = int(m.group(1).replace(",", ""))
 
+    next_gid = _nav_gid("#unext")
     return GalleryPageInfo(
         galleries=galleries,
-        next_gid=_nav_gid("#unext"),
+        next_gid=next_gid,
         prev_gid=_nav_gid("#uprev"),
         total_count=total_count,
+        # page-number pagination only when lastGid pagination is absent
+        next_page=None if next_gid is not None else _nav_page(),
     )
 
 
@@ -393,6 +515,7 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
         current_page_no=current_page_no,
         page_count=page_count,
         thumbnails=thumbnails,
+        tags=_parse_detail_tags(doc),
     )
 
 

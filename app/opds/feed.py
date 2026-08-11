@@ -85,10 +85,10 @@ class FeedBuilder:
         etree.SubElement(feed, f"{{{NS_ATOM}}}updated").text = updated
         etree.SubElement(feed, f"{{{NS_ATOM}}}author").text = "EHOPDS"
         # feed-level links
-        self._link(feed, REL_SELF, self.href("/opds"), MIME_NAV, "EHOPDS")
-        self._link(feed, REL_START, self.href("/opds"), MIME_NAV, "EHOPDS")
+        self._link(feed, REL_SELF, self.href("/opds/v1.2"), MIME_NAV, "EHOPDS")
+        self._link(feed, REL_START, self.href("/opds/v1.2"), MIME_NAV, "EHOPDS")
         self._link(
-            feed, REL_SEARCH, self.href("/opds/search.xml"), MIME_OPEN_SEARCH, "Search"
+            feed, REL_SEARCH, self.href("/opds/v1.2/search.xml"), MIME_OPEN_SEARCH, "Search"
         )
         return feed
 
@@ -136,14 +136,11 @@ class FeedBuilder:
 
     # -- root navigation feed ---------------------------------------------
 
-    def root_feed(self) -> str:
+    def root_feed(self, nav_entries: list[tuple[str, str, str]]) -> str:
+        """Root navigation feed. `nav_entries` are (title, href, summary)."""
         now = _iso()
         feed = self._feed("EHOPDS", now, MIME_NAV)
-        for title, href, summary in (
-            ("Latest", "/opds/gallery", "Recently uploaded galleries"),
-            ("Popular", "/opds/gallery?query=popular", "Popular galleries this week"),
-            ("Search", "/opds/search.xml", "Search E-Hentai galleries"),
-        ):
+        for title, href, summary in nav_entries:
             entry = FeedEntry(
                 id=f"urn:ehentai:subsection:{title.lower()}",
                 title=title,
@@ -156,7 +153,7 @@ class FeedBuilder:
 
     # -- OpenSearch description -------------------------------------------
 
-    def open_search(self) -> str:
+    def open_search(self, gallery_path: str = "/opds/v1.2/gallery") -> str:
         root = etree.Element(
             f"{{{NS_OPENSEARCH}}}OpenSearchDescription",
             nsmap={None: NS_OPENSEARCH},
@@ -170,7 +167,7 @@ class FeedBuilder:
         url.set("type", MIME_ACQ)
         url.set(
             "template",
-            self.href("/opds/gallery?query={searchTerms}"),
+            self.href(f"{gallery_path}?query={{searchTerms}}"),
         )
         return self.serialize(root)
 

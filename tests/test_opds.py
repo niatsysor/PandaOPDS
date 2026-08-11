@@ -27,19 +27,37 @@ def _parse(xml: str) -> etree._Element:
 
 
 def test_root_feed_structure():
-    xml = FeedBuilder(_settings()).root_feed()
+    nav_entries = [
+        ("Home", "/opds/v1.2/gallery", "Latest uploads"),
+        ("Watched", "/opds/v1.2/gallery?query=watched", "Watched galleries"),
+        ("Favorites", "/opds/v1.2/gallery?query=favorites", "Favorite galleries"),
+        ("Popular", "/opds/v1.2/gallery?query=popular", "Popular this week"),
+        ("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"),
+    ]
+    xml = FeedBuilder(_settings()).root_feed(nav_entries)
     root = _parse(xml)
     assert root.tag == f"{{{NS_ATOM}}}feed"
     assert root.find(f"{{{NS_ATOM}}}title").text == "EHOPDS"
     entries = root.findall(f"{{{NS_ATOM}}}entry")
     titles = [e.find(f"{{{NS_ATOM}}}title").text for e in entries]
-    assert titles == ["Latest", "Popular", "Search"]
+    assert titles == ["Home", "Watched", "Favorites", "Popular", "Search"]
+    # navigation entry hrefs
+    hrefs = [
+        e.find(f"{{{NS_ATOM}}}link").get("href") for e in entries
+    ]
+    assert hrefs == [
+        "/opds/v1.2/gallery",
+        "/opds/v1.2/gallery?query=watched",
+        "/opds/v1.2/gallery?query=favorites",
+        "/opds/v1.2/gallery?query=popular",
+        "/opds/v1.2/search.xml",
+    ]
     # search link present
     search_links = [
         l for l in root.findall(f"{{{NS_ATOM}}}link")
         if l.get("rel") == "search"
     ]
-    assert search_links and search_links[0].get("href") == "/opds/search.xml"
+    assert search_links and search_links[0].get("href") == "/opds/v1.2/search.xml"
 
 
 def test_open_search_template():
@@ -63,7 +81,7 @@ def test_gallery_feed_entries_and_pagination():
             summary="Pages: 10",
             links=[
                 FeedLink(rel="http://opds-spec.org/acquisition",
-                         href="/opds/gallery/1/tok/chapters", type=MIME_ACQ),
+                         href="/opds/v1.2/gallery/1/tok/chapters", type=MIME_ACQ),
                 FeedLink(rel=REL_STREAM,
                          href="/stream/1/tok/page/{pageNumber}",
                          type="image/jpeg", count=10),
@@ -71,17 +89,17 @@ def test_gallery_feed_entries_and_pagination():
         )
     ]
     xml = builder.gallery_feed(
-        query="test", entries=entries, updated=_iso(), next_href="/opds/gallery?next=999&query=test"
+        query="test", entries=entries, updated=_iso(), next_href="/opds/v1.2/gallery?next=999&query=test"
     )
     root = _parse(xml)
     next_links = [l for l in root.findall(f"{{{NS_ATOM}}}link") if l.get("rel") == "next"]
-    assert next_links and next_links[0].get("href") == "/opds/gallery?next=999&query=test"
+    assert next_links and next_links[0].get("href") == "/opds/v1.2/gallery?next=999&query=test"
     entry = root.find(f"{{{NS_ATOM}}}entry")
     assert entry.find(f"{{{NS_ATOM}}}id").text == "urn:ehentai:gallery:1:tok"
     cat = entry.find(f"{{{NS_ATOM}}}category")
     assert cat.get("term") == "Manga" and cat.get("scheme") == "http://e-hentai.org"
     acq = [l for l in entry.findall(f"{{{NS_ATOM}}}link") if l.get("rel") == "http://opds-spec.org/acquisition"]
-    assert acq[0].get("href") == "/opds/gallery/1/tok/chapters"
+    assert acq[0].get("href") == "/opds/v1.2/gallery/1/tok/chapters"
     # gallery entries also carry the PSE stream link (clients register chapters
     # directly from the list feed, e.g. Kasane)
     stream = [l for l in entry.findall(f"{{{NS_ATOM}}}link") if l.get("rel") == REL_STREAM]

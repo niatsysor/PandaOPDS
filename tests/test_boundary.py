@@ -33,6 +33,38 @@ EMPTY_GDT_HTML = """
 """
 
 
+# --------------------------------------------------------------------------
+# watched / favorites list endpoints
+# --------------------------------------------------------------------------
+
+
+async def test_watched_and_favorites_reuse_list_parser(tmp_path, monkeypatch):
+    """watched/favorites galleries reuse the standard list parser (offline)."""
+    from pathlib import Path
+
+    service = EHService(_settings(cache_dir=tmp_path))
+    html = (Path(__file__).parent / "fixtures" / "list_page.html").read_text(
+        encoding="utf-8"
+    )
+
+    async def fake_html_get(path: str, params: dict | None = None) -> str:
+        assert path in ("/watched", "/favorites.php")
+        if params:
+            assert params == {"next": "42"}
+        return html
+
+    monkeypatch.setattr(service, "_html_get", fake_html_get)
+
+    watched = await service.watched_galleries()
+    assert len(watched.galleries) == 25
+    first = watched.galleries[0]
+    assert first.gid and first.token and first.title
+
+    favorites = await service.favorites_galleries(last_gid=42)
+    assert len(favorites.galleries) == 25
+    assert favorites.next_gid
+
+
 def test_zero_page_gallery_parses_empty():
     info = parse_detail_page(EMPTY_GDT_HTML, "e-hentai.org", 0)
     assert isinstance(info, DetailPageInfo)

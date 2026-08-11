@@ -63,6 +63,18 @@ class Settings:
     image_cache_enabled: bool = True
     metadata_ttl_seconds: int = 3600
     page_url_ttl_seconds: int = 3600
+    list_cache_ttl_seconds: int = 600  # list-page parse results (search/popular/toplist...)
+
+    # --- Home navigation (v2.0 server-driven layout) ---
+    # Nav items that carry `extensions.layout=showcase` (expanded into a grid
+    # preview block by the first-party client). None = all items; a list = only
+    # the named keys (`watched`, `favorites`, `popular`, `toplist:yesterday`,
+    # `toplist:month`, `toplist:year`, `toplist:alltime`). v1.2 never carries
+    # this flag (documented constraint in AGENTS.md).
+    showcase_nav: list[str] | None = None
+    # How many Latest publications the v2.0 home document embeds in its top
+    # level `publications[]` array (the universal-client fallback grid).
+    home_publications: int = 10
 
     # --- derived ---
     @property
@@ -111,11 +123,9 @@ class Settings:
             raise ConfigError(
                 f"EH_SITE must be one of {list(_SITE_HOSTS)}, got {self.eh_site!r}"
             )
-        if not self.ipb_member_id or not self.ipb_pass_hash:
-            raise ConfigError(
-                "Missing required cookies: set IPB_MEMBER_ID and IPB_PASS_HASH "
-                "environment variables (see AGENTS.md)."
-            )
+        # IPB cookies are optional: without them the server still serves public
+        # content (Latest/Popular/Toplist/Search) and simply omits the auth-only
+        # nav items (Watched/Favorites).
 
 
 def load_settings() -> Settings:
@@ -142,6 +152,12 @@ def load_settings() -> Settings:
             return default
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
+    def _nav_list(value: str | None) -> list[str] | None:
+        """Parse SHOWCASE_NAV: comma-separated keys, empty/None = all."""
+        if value is None or not value.strip():
+            return None
+        return [k.strip().lower() for k in value.split(",") if k.strip()]
+
     settings = Settings(
         ipb_member_id=os.getenv("IPB_MEMBER_ID", "").strip(),
         ipb_pass_hash=os.getenv("IPB_PASS_HASH", "").strip(),
@@ -160,5 +176,8 @@ def load_settings() -> Settings:
         image_cache_enabled=_bool(os.getenv("IMAGE_CACHE_ENABLED"), True),
         metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 3600),
         page_url_ttl_seconds=_int(os.getenv("PAGE_URL_TTL_SECONDS"), 3600),
+        list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
+        showcase_nav=_nav_list(os.getenv("SHOWCASE_NAV")),
+        home_publications=_int(os.getenv("HOME_PUBLICATIONS"), 10),
     )
     return settings

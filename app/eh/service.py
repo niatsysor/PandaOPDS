@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 GDATA_BATCH_SIZE = 25
 THUMBS_PER_DETAIL_PAGE = 20
 
+# Ranklist periods -> `?tl=` value (aligned with JHenTai RanklistType:
+# day=15, month=13, year=12, allTime=11).
+TOPLIST_TL = {"yesterday": 15, "month": 13, "year": 12, "alltime": 11}
+
 
 class EHService:
     def __init__(
@@ -77,6 +81,29 @@ class EHService:
 
     # -- list pages --------------------------------------------------------
 
+    async def _list_page(
+        self,
+        kind: str,
+        path: str,
+        params: dict[str, str] | None = None,
+    ) -> GalleryPageInfo:
+        """Fetch + parse a list page, caching the parse result (short TTL).
+
+        List pages are the cheapest upstream objects but the home feed and
+        toplist feeds hit them repeatedly, so parse results are cached for
+        `list_cache_ttl_seconds` (default 10min).
+        """
+        query = "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
+        key = self._mem_key("list", kind, query)
+
+        async def _fetch() -> GalleryPageInfo:
+            html_text = await self._html_get(path, params=params)
+            return parse_list_page(html_text)
+
+        return await self.mem.get_or_set(
+            key, _fetch, self.settings.list_cache_ttl_seconds
+        )
+
     async def search_galleries(
         self,
         query: str = "",
@@ -88,13 +115,42 @@ class EHService:
             params["f_search"] = query
         if last_gid is not None:
             params["next"] = str(last_gid)
-        html_text = await self._html_get("/", params=params)
-        return parse_list_page(html_text)
+        return await self._list_page("search:" + query, "/", params)
 
     async def popular_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
         params = {"next": str(last_gid)} if last_gid is not None else {}
-        html_text = await self._html_get("/popular", params=params)
-        return parse_list_page(html_text)
+        return await self._list_page("popular", "/popular", params)
+
+    async def watched_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
+        """Watched galleries list (/watched). Reuses the standard list parser."""
+        params = {"next": str(last_gid)} if last_gid is not None else {}
+        return await self._list_page("watched", "/watched", params)
+
+    async def favorites_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
+        """Favorites list (/favorites.php). Reuses the standard list parser."""
+        params = {"next": str(last_gid)} if last_gid is not None else {}
+        return await self._list_page("favorites", "/favorites.php", params)
+
+    async def toplist_galleries(
+        self, period: str = "yesterday", page: int = 1
+    ) -> GalleryPageInfo:
+        """Ranklist page (toplist.php). Periods map to `?tl=` values; the page
+        uses `.ptt` page-number pagination (`?p=`), parsed into `next_page`.
+
+        JHenTai reuses the compact list parser for ranklist rows
+        (`ranklistPage2GalleryPageInfo` -> `_parseCompactGallery`), so
+        `parse_list_page` handles the layout; the rank column is ignored.
+        """
+        tl = TOPLIST_TL.get(period)
+        if tl is None:
+            raise EHException(
+                f"unknown toplist period {period!r} "
+                f"(expected one of {sorted(TOPLIST_TL)})"
+            )
+        params: dict[str, str] = {"tl": str(tl)}
+        if page > 1:
+            params["p"] = str(page)
+        return await self._list_page(f"toplist:{period}:{page}", "/toplist.php", params)
 
     async def _html_get(self, path: str, params: dict[str, str] | None = None) -> str:
         async with self.throttle.acquired(KIND_HTML):

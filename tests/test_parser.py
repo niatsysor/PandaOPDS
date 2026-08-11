@@ -276,3 +276,96 @@ def test_parse_gdata_response_skips_error_entries():
     metas = parse_gdata_response(body)
     assert len(metas) == 1
     assert metas[0].gid == 2
+
+
+# --------------------------------------------------------------------------
+# tag parsing (featured / highlighted tags with inline styles)
+# --------------------------------------------------------------------------
+
+COMPACT_TAGS_HTML = """
+<html><body>
+<table class="itg gltc"><tbody>
+  <tr>
+    <td class="gl2c"><div class="glthumb"><div><img src="/c/1.jpg"></div></div></td>
+    <td class="gl3c glname">
+      <a href="https://e-hentai.org/g/100/aaa/"><div class="glink">Tag Gallery</div></a>
+      <div class="gt" title="parody:zenless zone zero">zenless zone zero</div>
+      <div class="gtl" title="character:ellen joe">ellen joe</div>
+      <div class="gt" style="color:#f1f1f1;border-color:#048751;background:radial-gradient(#048751,#24A771) !important" title="female:netorare">f:netorare</div>
+    </td>
+    <td class="cn">Misc</td>
+    <td class="gl4c glhide"><div></div><div>5 pages</div></td>
+  </tr>
+</tbody></table>
+</body></html>
+"""
+
+
+def test_parse_list_page_compact_tags():
+    info = parse_list_page(COMPACT_TAGS_HTML)
+    assert len(info.galleries) == 1
+    g = info.galleries[0]
+    assert [str(t) for t in g.tags] == [
+        "parody:zenless zone zero",
+        "character:ellen joe",
+        "female:netorare",
+    ]
+    # gtl -> skepticism
+    assert g.tags[1].status == "skepticism"
+    # plain tag: no style
+    assert g.tags[0].style is None
+    # featured tag: inline style extracted, !important stripped
+    featured = g.tags[2]
+    assert featured.status == "confidence"
+    assert featured.style is not None
+    assert featured.style.color == "#f1f1f1"
+    assert featured.style.border_color == "#048751"
+    assert featured.style.background == "radial-gradient(#048751,#24A771)"
+
+
+DETAIL_TAGS_HTML = """
+<html><body>
+<div class="gtb"><div class="gpc">Showing 1 - 20 of 40 images</div></div>
+<div id="gdt" class="gdt">
+  <a href="/s/xyz123/2165080-1"><div style="width: 100px; height: 150px; background: url(https://ehgt.org/t/aa/bb_1.jpg);"></div></a>
+</div>
+<div id="taglist"><table>
+  <tr><td class="tc">parody:</td><td><div id="td_parody:zenless_zone_zero" class="gtl" style="opacity:1.0"><a id="ta_parody:zenless_zone_zero" href="https://exhentai.org/tag/parody:zenless+zone+zero">zenless zone zero</a></div></td></tr>
+  <tr><td class="tc">female:</td><td><div id="td_female:netorare" class="gt" style="color:#f1f1f1;border-color:#048751;background:radial-gradient(#048751,#24A771) !important"><a id="ta_female:netorare" href="#">netorare</a></div></td></tr>
+  <tr><td class="tc"></td><td><div id="td_custom_tag" class="gt"><a id="ta_custom_tag" href="#">custom tag</a></div></td></tr>
+</table></div>
+</body></html>
+"""
+
+
+def test_parse_detail_page_tags():
+    info = parse_detail_page(DETAIL_TAGS_HTML, "e-hentai.org", 0)
+    assert [str(t) for t in info.tags] == [
+        "parody:zenless zone zero",
+        "female:netorare",
+        "temp:custom tag",
+    ]
+    assert info.tags[0].status == "skepticism"  # gtl
+    assert info.tags[1].status == "confidence"  # gt
+    assert info.tags[1].style is not None
+    assert info.tags[1].style.background == "radial-gradient(#048751,#24A771)"
+    # id without namespace -> temp
+    assert info.tags[2].namespace == "temp"
+    # thumbnails still parsed alongside tags
+    assert len(info.thumbnails) == 1
+
+
+def test_parse_real_fixture_tags():
+    """Offline regression on the saved real HTML fixtures."""
+    from pathlib import Path
+
+    fx = Path(__file__).parent / "fixtures"
+    if not (fx / "list_page.html").exists():
+        return  # fixtures not saved yet
+    info = parse_list_page((fx / "list_page.html").read_text(encoding="utf-8"))
+    assert info.galleries[0].tags, "compact list page should carry tags"
+    detail = parse_detail_page(
+        (fx / "detail_page.html").read_text(encoding="utf-8"), "e-hentai.org", 0
+    )
+    assert detail.tags, "detail page should carry #taglist tags"
+    assert detail.tags[0].status in ("confidence", "skepticism", "incorrect")

@@ -23,9 +23,50 @@ class GalleryUrl:
 
 
 @dataclass
+class TagStyle:
+    """Inline style of a featured (voted-up) tag, from the upstream HTML.
+
+    Values are passed through verbatim (minus `!important`); empty keys are
+    omitted when serialized to OPDS.
+    """
+
+    color: str = ""          # e.g. #f1f1f1
+    border_color: str = ""   # e.g. #048751
+    background: str = ""     # e.g. radial-gradient(#048751,#24A771)
+
+    def as_dict(self) -> dict:
+        out: dict = {}
+        if self.color:
+            out["color"] = self.color
+        if self.border_color:
+            out["borderColor"] = self.border_color
+        if self.background:
+            out["background"] = self.background
+        return out
+
+
+# HTML classes on tag divs: gt=confidence, gtl=skepticism, gtw=incorrect
+TAG_STATUS_CONFIDENCE = "confidence"
+TAG_STATUS_SKEPTICISM = "skepticism"
+TAG_STATUS_INCORRECT = "incorrect"
+
+_TAG_STATUS_BY_CLASS = {
+    "gt": TAG_STATUS_CONFIDENCE,
+    "gtl": TAG_STATUS_SKEPTICISM,
+    "gtw": TAG_STATUS_INCORRECT,
+}
+
+
+def tag_status_from_class(class_name: str) -> str:
+    return _TAG_STATUS_BY_CLASS.get(class_name, TAG_STATUS_CONFIDENCE)
+
+
+@dataclass
 class GalleryTag:
     namespace: str
     key: str
+    status: str = TAG_STATUS_CONFIDENCE  # confidence | skepticism | incorrect
+    style: TagStyle | None = None  # featured-tag inline style (if parsed)
 
     def __str__(self) -> str:
         return f"{self.namespace}:{self.key}"
@@ -81,6 +122,21 @@ class GalleryMetadata:
                 return tag.key
         return "Japanese"
 
+    @property
+    def size_human(self) -> str:
+        """Human-readable file size (JHenTai byte2String): B/KB/MB/GB."""
+        size = float(self.filesize)
+        if size < 1024:
+            return f"{int(size)}B"
+        size /= 1024
+        if size < 1024:
+            return f"{size:.2f}KB"
+        size /= 1024
+        if size < 1024:
+            return f"{size:.2f}MB"
+        size /= 1024
+        return f"{size:.2f}GB"
+
 
 @dataclass
 class GalleryListItem:
@@ -95,16 +151,27 @@ class GalleryListItem:
     rating: float = 0.0
     publish_time: str = ""
     is_expunged: bool = False
+    # Tags parsed from the list page (layout dependent: compact/extended carry
+    # the full set, thumbnail only featured tags, minimal none). Featured tags
+    # carry `style`; non-featured tags have style=None.
+    tags: list[GalleryTag] = field(default_factory=list)
 
 
 @dataclass
 class GalleryPageInfo:
-    """Parsed list page: entries + pagination info."""
+    """Parsed list page: entries + pagination info.
+
+    Two pagination styles coexist: `next_gid` (front-page `next=` lastGid
+    pagination) and `next_page` (`.ptt` page-number pagination, used by
+    ranklist/toplist pages which have no `#unext`). Only one is set for a
+    given page.
+    """
 
     galleries: list[GalleryListItem] = field(default_factory=list)
     next_gid: int | None = None
     prev_gid: int | None = None
     total_count: int | None = None
+    next_page: int | None = None  # .ptt page-number pagination (toplist)
 
 
 @dataclass
@@ -117,6 +184,8 @@ class DetailPageInfo:
     current_page_no: int
     page_count: int  # number of thumbnail pages (ceil(filecount/20))
     thumbnails: list[GalleryThumbnail] = field(default_factory=list)
+    # Full tag list from the #taglist block (all tags, with status + style).
+    tags: list[GalleryTag] = field(default_factory=list)
 
 
 @dataclass

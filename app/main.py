@@ -15,6 +15,7 @@ from .config import ConfigError, load_settings
 from .eh.exceptions import EHException
 from .eh.service import EHService
 from .opds.router import router as opds_router
+from .opds2.router import router as opds2_router
 from .stream.router import router as stream_router
 from .throttle.limiter import CircuitOpenError
 
@@ -63,6 +64,7 @@ app = FastAPI(
 )
 
 app.include_router(opds_router)
+app.include_router(opds2_router)
 app.include_router(stream_router)
 
 

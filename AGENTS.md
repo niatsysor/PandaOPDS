@@ -4,7 +4,7 @@
 
 EHOPDS 是一个 **OPDS-PSE 串流服务器**，作为 E-Hentai.org 的中转代理：
 
-- 从 E-Hentai.org 抓取数据（图库列表、图库元数据、图片），输出为 **OPDS 1.2 Atom 目录 + OPDS-PSE 串流链接**。
+- 从 E-Hentai.org 抓取数据（图库列表、图库元数据、图片），输出为 **OPDS 1.2（Atom）与 OPDS 2.0（JSON）双版本目录 + OPDS-PSE 串流链接**。严格版本路径 `/opds/v1.2` / `/opds/v2.0`，旧 `/opds` 前缀已废弃。
 - 目标客户端：**自研阅读器**（对标 Panels 的 OPDS-PSE 消费方式），非 Mihon/Tachiyomi 插件生态（它们无 OPDS 源）。
 - 技术栈：**Python + FastAPI + uvicorn**（单进程异步）。
 - 部署：Docker 单机，nginx/caddy 反代，需要 `PUBLIC_BASE_URL` 支持。
@@ -48,7 +48,7 @@ EHOPDS/
 | `GET https://e-hentai.org/?f_search=...&next={lastGid}` | 列表页（搜索/最新/热门），`next` 参数分页 |
 | `GET https://e-hentai.org/g/{gid}/{token}/?p={n}` | 图库详情页（缩略图每页 20 个，`?p` 翻页） |
 | `GET https://e-hentai.org/s/{imageToken}/{gid}-{pageNo}` | 单图片页（pageNo **1-based**），解析 `#img` src 得真实图片 URL |
-| `https://e-hentai.org/popular` | 热门；`/favorites.php` 收藏；`/toplist.php` 排行榜 |
+| `https://e-hentai.org/popular` | 热门；`/favorites.php` 收藏；`/toplist.php` 排行榜（`?tl=` 周期：15=昨天/13=近一月/12=近一年/11=全部，`?p=` 翻页；对齐 JHenTai `RanklistType` day/month/year/allTime） |
 
 exhentai.org 对应域名：`exhentai.org`（页面）、`exhentai.org/api.php`（API）。
 
@@ -64,7 +64,7 @@ cookies = {
 ```
 `igneous` **不是用户需要提供的长效凭据**（`IGNEOUS` 仅作可选种子，`mystery` 忽略）：
 
-- 用户只需提供成对的 `ipb_member_id` + `ipb_pass_hash`（e-hentai 登录态）。
+- 用户提供成对的 `ipb_member_id` + `ipb_pass_hash`（e-hentai 登录态）**为可选项**：未提供时服务照常运行，公开内容（Latest/Popular/Toplist/Search）可用，仅 **Watched/Favorites 导航项不输出**（判定为配置派生 `bool(ipb_member_id and ipb_pass_hash)`，零上游探测）；cookie 失效时访问对应 feed 返回 503 + WARNING 日志（被动降级，不自动隐藏）。
 - 首次上游请求前 `EHClient.establish_session()` 先带 IPB 会话访问 e-hentai 鉴权/保活；
   `EH_SITE=exhentai` 时再访问 exhentai.org 一次，其响应 Set-Cookie 下发的 session 级
   `igneous` 由 httpx cookie jar 自动维护（进程生命周期内随会话/IP 变化，不持久化）。
@@ -115,11 +115,12 @@ EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai �
 
 | 层 | 介质 | TTL | 说明 |
 |---|---|---|---|
+| 列表页解析结果（search/popular/watched/favorites/toplist） | 内存 | 10min | 首页/展示区块高频命中，避免重复抓列表页（`LIST_CACHE_TTL_SECONDS`） |
 | 图库元数据（gdata 结果） | 内存 | 1h | ~1-2KB/条 |
 | 页面 URL 映射（/s/ 列表） | 内存 | 1h | 避免重复翻页 |
 | 图片字节 | 磁盘 LRU | 7 天 | 默认 4GB（环境变量 `CACHE_DIR`/`CACHE_MAX_GB` 可调），可关 |
 
-## OPDS-PSE 规范要点（服务端必须严格遵循）
+## OPDS-PSE 规范要点（服务端必须严格遵循，v1.2 与 v2.0 共用串流语义）
 
 规范原文：`http://vaemendis.net/opds-pse/`（2014-12-01，v1.0）。参考实现：Tachidesk/Suwayomi（`server/src/main/kotlin/suwayomi/tachidesk/opds/`，格式对齐对象）。
 
@@ -134,16 +135,41 @@ EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai �
 - Feed 媒体类型：`application/atom+xml;profile=opds-catalog;kind=navigation` / `kind=acquisition`。
 - OpenSearch：`application/opensearchdescription+xml`，`template` 含 `{searchTerms}`。
 
-### 路由设计
+### 路由设计（严格版本路径，无旧路径兼容）
+
+**OPDS 1.2（Atom，`app/opds/`）**
 
 | 路由 | 说明 |
 |------|------|
-| `GET /opds` | 根导航 feed（Latest / Popular / Search） |
-| `GET /opds/search.xml` | OpenSearchDescription 文档 |
-| `GET /opds/gallery?query=&page=N` | 图库采集 feed（`rel="next"` 分页，复用 `next` + `lastGid`） |
-| `GET /opds/gallery/{gid}/{token}/chapters` | 图库详情 feed（单章节条目 + PSE stream link） |
-| `GET /stream/{gid}/{token}/page/{n}` | 图片代理流（默认 1-based，`PSE_PAGE_BASE=0` 时 0-based，返回 image/jpeg） |
-| `GET /image/{gid}/{token}/thumb` | 缩略图代理 |
+| `GET /opds/v1.2` | 根导航 feed（Watched / Favorites / Popular / Toplist×4 / Search；Home 已移除，Latest 直接走 `/opds/v1.2/gallery`；Watched/Favorites 按 cookie 存在性过滤） |
+| `GET /opds/v1.2/search.xml` | OpenSearchDescription 文档 |
+| `GET /opds/v1.2/gallery?query=&next=` | 图库采集 feed（`rel="next"` 分页复用 `next` + `lastGid`；`query` 支持浏览维度：空=主页、`watched`、`favorites`、`popular`） |
+| `GET /opds/v1.2/toplist?period=&page=` | Toplist 采集 feed（`period` ∈ yesterday/month/year/alltime；`rel="next"` 用 `page` 分页；纯标准 Atom，**不涉及 extensions**） |
+| `GET /opds/v1.2/gallery/{gid}/{token}/chapters` | 图库详情 feed（单章节条目 + PSE stream link） |
+| `GET /stream/{gid}/{token}/page/{n}` | 图片代理流（默认 1-based，`PSE_PAGE_BASE=0` 时 0-based，返回 image/jpeg；v1.2/v2.0 共用） |
+| `GET /image/{gid}/{token}/thumb` | 缩略图代理（共用） |
+
+**OPDS 2.0（JSON，`app/opds2/`）**
+
+| 路由 | 说明 |
+|------|------|
+| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`navigation[]` = Watched / Favorites（按 cookie 过滤）/ Popular / Toplist×4，**默认全挂 `metadata.extensions.layout="showcase"`**（`SHOWCASE_NAV` 白名单可排除）；顶层 `publications[]` = Latest `HOME_PUBLICATIONS`（默认 10）条（标准字段兜底 grid，通用客户端无条件渲染，`rel="next"` 指向 Latest 第 2 页） |
+| `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
+| `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
+| `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
+| `GET /opds/v2.0/gallery/{gid}/{token}` | 单 publication 文档（acquisition 落点 / 完整元数据入口，对应 v1.2 章节 feed） |
+
+浏览维度 `watched`/`favorites` 复用列表解析器（`parse_list_page`）：`EHService.watched_galleries` → `/watched`，`EHService.favorites_galleries` → `/favorites.php`。
+
+### 首页排版（server-driven，v2.0 专属）
+
+**约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，也不在根 feed 混入采集条目。
+
+- **showcase flag**：v2.0 根文档 `navigation[].metadata.extensions.layout` ∈ `list`（缺省）| `showcase`。通用客户端忽略此字段（`navigation` 照常渲染为列表）；**自研客户端**识别 `showcase` 后异步请求该项 `href`，取返回 acquisition feed 前 N 条（客户端常量）渲染为该区块的 grid 预览。未知 layout 值 → 当普通导航渲染（服务端可向前扩展布局类型，无需重建客户端）。
+- **顶层 `publications[]` 兜底**：根文档顶层 `publications[]` = Latest 前 `HOME_PUBLICATIONS` 条，是标准字段，任何 OPDS 2.0 客户端无条件渲染为 grid——自研客户端将其渲染为 "Latest" 区块；通用客户端因此也能在首页看到内容（Home 导航项已移除，由该数组承担）。
+- **配置**：`SHOWCASE_NAV` 白名单（逗号分隔，key 为 `watched`/`favorites`/`popular`/`toplist:yesterday`/`toplist:month`/`toplist:year`/`toplist:alltime`；缺省 = 全部挂 flag）。
+
+**OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 
 ### 章节条目 XML 模板
 
@@ -154,12 +180,59 @@ EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai �
   <updated>{iso8601}</updated>
   <author><name>{artist}</name></author>
   <category term="{genre}" label="{genre}" scheme="http://e-hentai.org"/>
-  <summary type="text">{语言/页数/上传者/评分}</summary>
+  <summary type="text">{语言/页数/上传者/评分/大小}</summary>
   <link rel="http://opds-spec.org/image/thumbnail" href="/image/{gid}/{token}/thumb" type="image/jpeg"/>
   <link rel="http://vaemendis.net/opds-pse/stream"
         href="/stream/{gid}/{token}/page/{pageNumber}"
         type="image/jpeg" pse:count="{filecount}"/>
 </entry>
+```
+
+### OPDS 2.0 publication JSON 模板（`app/opds2/feed.py`）
+
+OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numberOfItems`（OPDS 2.0 标准属性）表达；页码基数不再传输（默认 1-based，与 LANraragi/Kasane 一致，`PSE_PAGE_BASE=0` 部署由自研客户端带外约定同步）。
+
+**字段分层约定（本项目核心）**：
+
+- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subjects`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subjects` 为拍平标签字符串数组（Komga 风格，含全部 `ns:key` 标签，不含分类）。
+- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`tags`（完整标签：`namespace`/`key` + 仅非常规时输出的 `status`（`skepticism`/`incorrect`）+ 仅高亮标签输出的 `style`（`color`/`borderColor`/`background`，来自上游 HTML inline style，`!important` 已剥离））。`category` 刻意不进 `subjects`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subjects`。
+- 标签高亮数据来源：列表 feed 用列表页解析的高亮标签子集（布局相关：compact/extended 全量、thumbnail 仅高亮、minimal 无）覆盖 gdata 标签；详情文档用详情页 `#taglist`（完整 + 状态 + 样式，详情页缓存 1h）。
+
+```json
+{
+  "metadata": {
+    "title": "{title}",
+    "identifier": "urn:ehentai:gallery:{gid}:{token}",
+    "modified": "{iso8601}",
+    "authors": [{"name": "{uploader}"}],
+    "language": ["{language}"],
+    "subjects": ["{ns}:{key}", "..."],
+    "numberOfPages": {filecount},
+    "description": "{语言/页数/上传者/评分/大小}",
+    "published": "{iso8601}",
+    "extensions": {
+      "rating": {rating},
+      "titleJpn": "{title_jpn}",
+      "sizeBytes": {filesize},
+      "expunged": {expunged},
+      "category": "{category}",
+      "tags": [{"namespace": "{ns}", "key": "{key}",
+                  "status": "{skepticism|incorrect}",
+                  "style": {"color": "#f1f1f1", "borderColor": "#048751",
+                            "background": "radial-gradient(#048751,#24A771)"}}]
+    }
+  },
+  "links": [
+    {"rel": "http://opds-spec.org/image/thumbnail", "href": "/image/{gid}/{token}/thumb", "type": "image/jpeg"},
+    {"rel": "http://opds-spec.org/acquisition", "href": "/opds/v2.0/gallery/{gid}/{token}",
+     "type": "application/opds+json;profile=acquisition",
+     "properties": {"numberOfItems": {filecount}}},
+    {"rel": "http://vaemendis.net/opds-pse/stream",
+     "href": "/stream/{gid}/{token}/page/{pageNumber}",
+     "type": "image/jpeg",
+     "properties": {"numberOfItems": {filecount}}}
+  ]
+}
 ```
 
 ### 反代注意事项
@@ -171,10 +244,10 @@ EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai �
 
 ```
 客户端（对标 Panels）
-   │ OPDS 1.2 + PSE stream links
+   │ OPDS 1.2 (Atom) / 2.0 (JSON) + PSE stream links
    ▼
 FastAPI (uvicorn) 单进程
-├─ Feed 层：OPDS XML 生成（根/列表/章节 feed + OpenSearch）
+├─ Feed 层：OPDS XML/JSON 生成（v1.2 Atom + v2.0 JSON + OpenSearch）
 ├─ 代理层：图片/缩略图流式转发 + 磁盘缓存
 ├─ 数据层：gdata API + 列表/详情/图片页 HTML 解析
 ├─ 缓存层：内存（元数据/页面URL，1h）+ 磁盘（图片，7d）
@@ -182,7 +255,7 @@ FastAPI (uvicorn) 单进程
 ```
 
 一次图库完整生命周期：
-1. 章节 feed 请求 → 缓存未命中 → `gdata` 拿 `filecount`/标题/标签 → 生成条目（`pse:count=filecount`）
+1. v1.2 章节 feed / v2.0 详情文档请求 → 缓存未命中 → `gdata` 拿 `filecount`/标题/标签 → 生成条目（v1.2 `pse:count` / v2.0 `numberOfItems` = filecount）
 2. `/stream/page/{n}` 请求 → 页面 URL 缓存未命中 → 抓详情页 `?p={(n-1)//20}`（1 请求服务 20 页）→ 取第 n 个 `/s/` URL → 抓 `/s/` 页解析 `#img` src → 抓图片字节 → 磁盘缓存 → 流式返回（n 为 1-based 时）
 3. 触发 509 → 429；banned/exceedLimit → 全局熔断
 
@@ -198,8 +271,9 @@ export IPB_MEMBER_ID=... IPB_PASS_HASH=...
 uvicorn app.main:app --reload --port 8000
 
 # 冒烟测试（无客户端）
-curl -H "Accept: application/atom+xml" http://localhost:8000/opds
-curl -H "Accept: application/atom+xml" "http://localhost:8000/opds/gallery?query=language:chinese"
+curl -H "Accept: application/atom+xml" http://localhost:8000/opds/v1.2
+curl -H "Accept: application/opds+json" http://localhost:8000/opds/v2.0
+curl -H "Accept: application/atom+xml" "http://localhost:8000/opds/v1.2/gallery?query=language:chinese"
 curl -o /tmp/p0.jpg "http://localhost:8000/stream/{gid}/{token}/page/0"
 ```
 
