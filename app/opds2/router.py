@@ -5,6 +5,7 @@ Versioned under /opds/v2.0 (JSON); the v1.2 Atom feeds live under /opds/v1.2.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from urllib.parse import quote
 
@@ -24,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opds/v2.0", tags=["opds2"])
 
-# Root navigation entries (v2.0). Home is intentionally absent — the
-# top-level `publications[]` array IS the Latest block. Watched/Favorites are
-# auth-gated (omitted when no IPB cookies). Each item carries a stable key
-# used by SHOWCASE_NAV (None = all items get the showcase flag).
-_ROOT_NAV_BASE = [
+# All known sections. Items listed in HOME_GROUPS appear as groups with inline
+# publication previews on the root document; the rest (minus auth-gated ones
+# when no cookie) appear as plain navigation entries.
+_SECTIONS = [
+    ("Latest", "/opds/v2.0/gallery", "Latest galleries", "latest"),
     ("Watched", "/opds/v2.0/gallery?query=watched", "Watched galleries", "watched"),
     ("Favorites", "/opds/v2.0/gallery?query=favorites", "Favorite galleries", "favorites"),
     ("Popular", "/opds/v2.0/gallery?query=popular", "Popular this week", "popular"),
@@ -47,11 +48,6 @@ _TOPLIST_PERIODS = {
     "year": "Past Year",
     "alltime": "All Time",
 }
-
-
-def _showcase_keys(settings) -> set[str] | None:
-    """SHOWCASE_NAV whitelist: None = all nav items carry the flag."""
-    return None if settings.showcase_nav is None else set(settings.showcase_nav)
 
 
 def _service(request: Request) -> EHService:
@@ -185,47 +181,131 @@ def _publication(
     )
 
 
+async def _fetch_list_page(
+    service: EHService,
+    key: str,
+) -> tuple[str, str, str, GalleryPageInfo] | None:
+    """Fetch one list page. Returns (key, title, href, info) or None on failure."""
+    try:
+        if key == "latest":
+            info = await service.search_galleries(query="")
+            return (key, "Latest", "/opds/v2.0/gallery", info)
+        elif key == "popular":
+            info = await service.popular_galleries()
+            return (key, "Popular", "/opds/v2.0/gallery?query=popular", info)
+        elif key == "watched":
+            info = await service.watched_galleries()
+            return (key, "Watched", "/opds/v2.0/gallery?query=watched", info)
+        elif key == "favorites":
+            info = await service.favorites_galleries()
+            return (key, "Favorites", "/opds/v2.0/gallery?query=favorites", info)
+        elif key.startswith("toplist:"):
+            period = key.split(":", 1)[1]
+            info = await service.toplist_galleries(period=period)
+            title = {"yesterday": "Toplist: Yesterday", "month": "Toplist: Past Month",
+                     "year": "Toplist: Past Year", "alltime": "Toplist: All Time"}.get(period, key)
+            return (key, title, f"/opds/v2.0/toplist?period={period}", info)
+        else:
+            logger.warning("unknown home group key %r", key)
+            return None
+    except Exception as exc:
+        logger.warning("home group %s list error: %s", key, exc)
+        return None
+
+
 @router.get("", response_class=Response)
 async def root_feed(request: Request):
+    """Root OPDS 2.0 document.
+
+    Sections listed in ``HOME_GROUPS`` are rendered as ``groups[]`` entries
+    with inline publication previews (OPDS 2.0 §2.5).  The remaining sections
+    appear in the standard ``navigation[]`` array.
+    Watched / Favorites are auth-gated: omitted entirely when no IPB cookie
+    is configured.
+
+    Implementation note: list pages are fetched concurrently, then **all**
+    gdata metadata is merged into a single batched ``get_metadatas()`` call
+    so the API never exceeds the 4–5 request safe window.
+    """
     service = _service(request)
     builder = _builder(request)
     settings = request.app.state.settings
 
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
-    showcase = _showcase_keys(settings)
+    home_group_keys = set(settings.home_groups)
 
-    nav = []
-    for title, href, summary, key in _ROOT_NAV_BASE:
+    # Partition sections: groups (inline previews) vs navigation (links only).
+    nav_items: list[dict] = []
+    list_tasks: list[asyncio.Task] = []
+
+    for title, href, summary, key in _SECTIONS:
         if key in ("watched", "favorites") and not has_auth:
             continue
-        item = {"title": title, "href": href, "summary": summary}
-        if showcase is None or key in showcase:
-            item["extensions"] = {"layout": "showcase"}
-        nav.append(item)
+        if key in home_group_keys:
+            list_tasks.append(
+                asyncio.create_task(_fetch_list_page(service, key))
+            )
+        else:
+            nav_items.append({"title": title, "href": href, "summary": summary})
 
-    # Top-level Latest publications: the universal fallback grid, rendered by
-    # every OPDS 2.0 client regardless of the private showcase flag (the
-    # first-party client renders it as the "Latest" block). Degrades to an
-    # empty array on upstream failure — navigation still works.
-    publications: list[dict] = []
-    next_href: str | None = None
-    try:
-        info = await service.search_galleries(query="")
-        metas = await service.get_metadatas(
-            [(g.gid, g.token) for g in info.galleries]
-        )
+    # Phase 1 — await all list pages concurrently.
+    list_results: list[tuple[str, str, str, GalleryPageInfo]] = []
+    if list_tasks:
+        done, _pending = await asyncio.wait(list_tasks)
+        for task in done:
+            try:
+                result = task.result()
+                if result is not None:
+                    list_results.append(result)
+            except Exception as exc:
+                logger.warning("home group list error: %s", exc)
+
+    # Phase 2 — collect all unique gids, fetch metadata in ONE merged batch.
+    # This is the critical defence: instead of N independent get_metadatas()
+    # calls (N× batch fragmentation), we issue a single call → ≤ 4 API
+    # requests total (100 gid / 25 per batch), staying within the EH API
+    # safe window of 4–5 sequential requests.
+    groups: list[dict] = []
+    if list_results:
+        all_gids: dict[tuple[int, str], int] = {}  # (gid,token) -> list idx
+        group_data: list[tuple[str, str, str, list[GalleryListItem]]] = []
+        for idx, (key, title, href, info) in enumerate(list_results):
+            items = info.galleries[: settings.home_publications]
+            group_data.append((key, title, href, items))
+            for item in items:
+                all_gids.setdefault((item.gid, item.token), idx)
+
+        try:
+            metas = await service.get_metadatas(list(all_gids.keys()))
+        except Exception as exc:
+            logger.warning("home metadata batch error: %s", exc)
+            metas = []
         meta_by_gid = {m.gid: m for m in metas}
-        publications = [
-            _publication(builder, item, meta_by_gid.get(item.gid))
-            for item in info.galleries[: settings.home_publications]
-        ]
-        if info.next_gid:
-            next_href = builder.href(f"/opds/v2.0/gallery?next={info.next_gid}")
-    except Exception as exc:  # upstream failure: navigation-only fallback
-        logger.warning("home publications upstream error: %s", exc)
+
+        # Phase 3 — build publication dicts and group dicts.
+        for key, title, href, items in group_data:
+            publications = [
+                _publication(builder, item, meta_by_gid.get(item.gid))
+                for item in items
+            ]
+            groups.append({
+                "metadata": {
+                    "title": title,
+                    "identifier": f"urn:ehentai:group:{key}",
+                    "modified": _iso(),
+                },
+                "links": [{
+                    "rel": "self",
+                    "href": builder.href(href),
+                    "type": MIME_ACQ,
+                    "title": title,
+                }],
+                "publications": publications,
+            })
 
     content = builder.navigation_document(
-        nav, publications=publications, next_href=next_href
+        navigation=nav_items or None,
+        groups=groups or None,
     )
     return Response(
         content=content,

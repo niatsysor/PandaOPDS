@@ -1,8 +1,8 @@
-# AGENTS.md — EHOPDS 项目指南
+# AGENTS.md — PandaOPDS 项目指南
 
 ## 项目概述
 
-EHOPDS 是一个 **OPDS-PSE 串流服务器**，作为 E-Hentai.org 的中转代理：
+PandaOPDS 是一个 **OPDS-PSE 串流服务器**，作为 E-Hentai.org 的中转代理：
 
 - 从 E-Hentai.org 抓取数据（图库列表、图库元数据、图片），输出为 **OPDS 1.2（Atom）与 OPDS 2.0（JSON）双版本目录 + OPDS-PSE 串流链接**。严格版本路径 `/opds/v1.2` / `/opds/v2.0`，旧 `/opds` 前缀已废弃。
 - 目标客户端：**自研阅读器**（对标 Panels 的 OPDS-PSE 消费方式），非 Mihon/Tachiyomi 插件生态（它们无 OPDS 源）。
@@ -14,7 +14,7 @@ EHOPDS 是一个 **OPDS-PSE 串流服务器**，作为 E-Hentai.org 的中转代
 ## 项目结构
 
 ```
-EHOPDS/
+PandaOPDS/
 ├── AGENTS.md          # 本文件：项目约定
 ├── docs/
 │   └── plans/
@@ -109,7 +109,7 @@ Content-Type: application/json
 | 403 | Cloudflare | 退避 |
 | 图片 src = 509.gif | 图片限额 | 返回 429 |
 
-EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai 客户端更易触发封禁 → **全局节流 + 缓存命中率是第一优先级**。
+PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai 客户端更易触发封禁 → **全局节流 + 缓存命中率是第一优先级**。
 
 ### 缓存策略（与 JHenTai 参数一致）
 
@@ -153,7 +153,7 @@ EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai �
 
 | 路由 | 说明 |
 |------|------|
-| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`navigation[]` = Watched / Favorites（按 cookie 过滤）/ Popular / Toplist×4，**默认全挂 `metadata.extensions.layout="showcase"`**（`SHOWCASE_NAV` 白名单可排除）；顶层 `publications[]` = Latest `HOME_PUBLICATIONS`（默认 10）条（标准字段兜底 grid，通用客户端无条件渲染，`rel="next"` 指向 Latest 第 2 页） |
+| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`groups[]` = 各区块内联 publication 预览（OPDS 2.0 §2.5，由 `HOME_GROUPS` 控制，默认 `latest,popular,toplist:yesterday,toplist:month`，每组 `HOME_PUBLICATIONS` 条，默认 20）；`navigation[]` = 其余区块的纯导航链接（无 extensions）；Watched/Favorites 按 cookie 过滤 |
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
@@ -165,9 +165,9 @@ EHOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai �
 
 **约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，也不在根 feed 混入采集条目。
 
-- **showcase flag**：v2.0 根文档 `navigation[].metadata.extensions.layout` ∈ `list`（缺省）| `showcase`。通用客户端忽略此字段（`navigation` 照常渲染为列表）；**自研客户端**识别 `showcase` 后异步请求该项 `href`，取返回 acquisition feed 前 N 条（客户端常量）渲染为该区块的 grid 预览。未知 layout 值 → 当普通导航渲染（服务端可向前扩展布局类型，无需重建客户端）。
-- **顶层 `publications[]` 兜底**：根文档顶层 `publications[]` = Latest 前 `HOME_PUBLICATIONS` 条，是标准字段，任何 OPDS 2.0 客户端无条件渲染为 grid——自研客户端将其渲染为 "Latest" 区块；通用客户端因此也能在首页看到内容（Home 导航项已移除，由该数组承担）。
-- **配置**：`SHOWCASE_NAV` 白名单（逗号分隔，key 为 `watched`/`favorites`/`popular`/`toplist:yesterday`/`toplist:month`/`toplist:year`/`toplist:alltime`；缺省 = 全部挂 flag）。
+- **`groups[]`（OPDS 2.0 标准，§2.5）**：根文档 `groups[]` 中每个 group 包含 `metadata.title`、`links`（`rel="self"` 指向完整列表）、`publications[]`（内联预览条目）。**任何兼容 OPDS 2.0 的客户端均可原生渲染为分栏网格**——无需私货标记。`HOME_GROUPS` 环境变量（逗号分隔 key）控制哪些区块出现在 groups 中；未列出的落入 `navigation[]` 作为纯导航链接。
+- **`navigation[]`**：`navigation[]` 仅包含不在 `HOME_GROUPS` 中的区块（如 Watched/Favorites 默认不在 groups），以及无 IPB cookie 时省略的 Watched/Favorites。不再输出 `extensions.layout` 私货。
+- **配置**：`HOME_GROUPS`（逗号分隔 key，默认 `latest,popular,toplist:yesterday,toplist:month`）；`HOME_PUBLICATIONS`（每组预览条目数，默认 20）。
 
 **OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 

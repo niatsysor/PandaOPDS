@@ -1,6 +1,6 @@
-# Caddy reverse proxy example for EHOPDS.
+# Caddy reverse proxy example for PandaOPDS.
 # Automatic TLS via Let's Encrypt. Requires PUBLIC_BASE_URL=https://opds.example.com
-# in the EHOPDS environment.
+# in the PandaOPDS environment.
 
 opds.example.com {
     reverse_proxy 127.0.0.1:8000 {

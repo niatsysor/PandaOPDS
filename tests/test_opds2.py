@@ -75,7 +75,7 @@ def test_navigation_document():
             ]
         )
     )
-    assert doc["metadata"]["title"] == "EHOPDS"
+    assert doc["metadata"]["title"] == "PandaOPDS"
     assert doc["metadata"]["identifier"] == "urn:ehentai:root"
     assert "modified" in doc["metadata"]
     links = {l["rel"]: l for l in doc["links"]}

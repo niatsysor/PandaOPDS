@@ -79,55 +79,47 @@ class Opds2Builder:
 
     def navigation_document(
         self,
-        entries: list[tuple[str, str, str] | dict],
-        publications: list[dict] | None = None,
-        next_href: str | None = None,
+        navigation: list[dict] | None = None,
+        groups: list[dict] | None = None,
     ) -> str:
-        """Root navigation document. `entries` are (title, href, summary)
-        tuples or dicts with optional `extensions` (v2.0-only private layout
-        flags, e.g. ``{"layout": "showcase"}``; v1.2 never carries these).
+        """Root navigation document.
 
-        When `publications` is provided the document is a hybrid: standard
-        top-level ``publications[]`` rendered as a grid by every OPDS 2.0
-        client — the universal fallback for clients that ignore the private
-        showcase flag. `next_href` is the standard rel="next" continuation
-        (points at the Latest list page 2 when publications = Latest).
+        `navigation` items are plain ``{"title", "href", "summary"}`` dicts
+        rendered into the standard ``navigation[]`` array (OPDS 2.0 §2.4).
+
+        `groups` are pre-built group dicts placed in the standard
+        ``groups[]`` array (OPDS 2.0 §2.5). Each group carries its own
+        ``metadata``, a ``self`` link pointing at the full collection, and
+        an inline ``publications[]`` preview — server-driven multi-section
+        home pages without private extensions.
         """
         now = _iso()
 
-        def _nav_item(item: tuple | dict) -> dict:
-            if isinstance(item, dict):
-                return item
-            title, href, summary = item
-            return {"title": title, "href": href, "summary": summary}
-
-        navigation: list[dict] = []
-        for item in entries:
-            ni = _nav_item(item)
-            title = ni["title"]
-            md: dict = self._metadata(
-                title, f"urn:ehentai:subsection:{title.lower()}", now
-            )
-            if ni.get("summary"):
-                md["description"] = ni["summary"]
-            if ni.get("extensions"):
-                md["extensions"] = ni["extensions"]
-            navigation.append(
-                {
-                    "metadata": md,
-                    "links": [
-                        self._link(
-                            REL_SUBSECTION, self.href(ni["href"]), MIME_ACQ, title
-                        )
-                    ],
-                }
-            )
+        nav_list: list[dict] = []
+        if navigation:
+            for item in navigation:
+                title = item["title"]
+                md: dict = self._metadata(
+                    title, f"urn:ehentai:subsection:{title.lower()}", now
+                )
+                if item.get("summary"):
+                    md["description"] = item["summary"]
+                nav_list.append(
+                    {
+                        "metadata": md,
+                        "links": [
+                            self._link(
+                                REL_SUBSECTION, self.href(item["href"]), MIME_ACQ, title
+                            )
+                        ],
+                    }
+                )
 
         doc = {
-            "metadata": self._metadata("EHOPDS", "urn:ehentai:root", now),
+            "metadata": self._metadata("PandaOPDS", "urn:ehentai:root", now),
             "links": [
-                self._link(REL_SELF, self.href("/opds/v2.0"), MIME_NAV, "EHOPDS"),
-                self._link(REL_START, self.href("/opds/v2.0"), MIME_NAV, "EHOPDS"),
+                self._link(REL_SELF, self.href("/opds/v2.0"), MIME_NAV, "PandaOPDS"),
+                self._link(REL_START, self.href("/opds/v2.0"), MIME_NAV, "PandaOPDS"),
                 self._link(
                     REL_SEARCH,
                     self.href(SEARCH_TEMPLATE),
@@ -135,12 +127,10 @@ class Opds2Builder:
                     "Search",
                 ),
             ],
-            "navigation": navigation,
+            "navigation": nav_list,
         }
-        if next_href:
-            doc["links"].append(self._link(REL_NEXT, next_href, MIME_ACQ, "Next page"))
-        if publications:
-            doc["publications"] = publications
+        if groups:
+            doc["groups"] = groups
         return self.serialize(doc)
 
     # -- acquisition document ----------------------------------------------
@@ -159,7 +149,7 @@ class Opds2Builder:
             "metadata": self._metadata(title, identifier, now),
             "links": [
                 self._link(REL_SELF, self.href(self_href), MIME_ACQ, title),
-                self._link(REL_START, self.href("/opds/v2.0"), MIME_NAV, "EHOPDS"),
+                self._link(REL_START, self.href("/opds/v2.0"), MIME_NAV, "PandaOPDS"),
                 self._link(
                     REL_SEARCH,
                     self.href(SEARCH_TEMPLATE),

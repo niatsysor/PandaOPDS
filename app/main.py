@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.service = service
     logger.info(
-        "EHOPDS started: site=%s host=%s cache_dir=%s image_cache=%s",
+        "PandaOPDS started: site=%s host=%s cache_dir=%s image_cache=%s",
         settings.eh_site,
         settings.site_host,
         settings.cache_dir,
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="EHOPDS",
+    title="PandaOPDS",
     description="OPDS-PSE streaming server proxying E-Hentai.org",
     version="0.1.0",
     lifespan=lifespan,

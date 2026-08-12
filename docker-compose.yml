@@ -1,5 +1,5 @@
 services:
-  ehopds:
+  pandaopds:
     build: .
     restart: unless-stopped
     ports:

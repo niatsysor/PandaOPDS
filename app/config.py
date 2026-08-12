@@ -45,8 +45,8 @@ class Settings:
     # --- HTTP ---
     timeout_seconds: float = 6.0      # JHenTai-style default timeout
     retries: int = 3                  # network-error retries
-    html_interval_seconds: float = 1.5  # min delay between HTML page requests
-    max_concurrency: int = 2          # global outbound concurrency
+    html_interval_seconds: float = 0.3  # min delay between HTML page requests
+    max_concurrency: int = 5          # global outbound concurrency (EH API: 4-5 safe)
 
     # --- URLs ---
     public_base_url: str = ""  # when set, feeds emit absolute URLs
@@ -66,15 +66,20 @@ class Settings:
     list_cache_ttl_seconds: int = 600  # list-page parse results (search/popular/toplist...)
 
     # --- Home navigation (v2.0 server-driven layout) ---
-    # Nav items that carry `extensions.layout=showcase` (expanded into a grid
-    # preview block by the first-party client). None = all items; a list = only
-    # the named keys (`watched`, `favorites`, `popular`, `toplist:yesterday`,
-    # `toplist:month`, `toplist:year`, `toplist:alltime`). v1.2 never carries
-    # this flag (documented constraint in AGENTS.md).
-    showcase_nav: list[str] | None = None
-    # How many Latest publications the v2.0 home document embeds in its top
-    # level `publications[]` array (the universal-client fallback grid).
-    home_publications: int = 10
+    # Sections rendered as ``groups[]`` on the root OPDS 2.0 document, each
+    # carrying an inline ``publications[]`` preview (OPDS 2.0 §2.5). Keys:
+    # ``latest``, ``popular``, ``watched``, ``favorites``,
+    # ``toplist:yesterday``, ``toplist:month``, ``toplist:year``,
+    # ``toplist:alltime``. Sections not listed here become plain
+    # ``navigation[]`` links (except Watched/Favorites, which are omitted
+    # entirely when no IPB cookie is configured).
+    home_groups: list[str] = field(
+        default_factory=lambda: ["latest", "popular", "toplist:yesterday", "toplist:month"]
+    )
+    # How many publications each home group embeds. E-Hentai pages hold 25
+    # items (list) / 20 items (detail thumbs), so a value ≤ 25 costs one
+    # upstream page per group.
+    home_publications: int = 20
 
     # --- derived ---
     @property
@@ -152,11 +157,13 @@ def load_settings() -> Settings:
             return default
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
-    def _nav_list(value: str | None) -> list[str] | None:
-        """Parse SHOWCASE_NAV: comma-separated keys, empty/None = all."""
+    def _home_groups(value: str | None) -> list[str]:
+        """Parse HOME_GROUPS: comma-separated keys, defaults if empty."""
+        defaults = ["latest", "popular", "toplist:yesterday", "toplist:month"]
         if value is None or not value.strip():
-            return None
-        return [k.strip().lower() for k in value.split(",") if k.strip()]
+            return defaults
+        parsed = [k.strip().lower() for k in value.split(",") if k.strip()]
+        return parsed or defaults
 
     settings = Settings(
         ipb_member_id=os.getenv("IPB_MEMBER_ID", "").strip(),
@@ -167,8 +174,8 @@ def load_settings() -> Settings:
         datatags=os.getenv("DATATAGS", "1").strip() or "1",
         timeout_seconds=_float(os.getenv("TIMEOUT_SECONDS"), 6.0),
         retries=_int(os.getenv("RETRIES"), 3),
-        html_interval_seconds=_float(os.getenv("HTML_INTERVAL_SECONDS"), 1.5),
-        max_concurrency=_int(os.getenv("MAX_CONCURRENCY"), 2),
+        html_interval_seconds=_float(os.getenv("HTML_INTERVAL_SECONDS"), 0.3),
+        max_concurrency=_int(os.getenv("MAX_CONCURRENCY"), 5),
         public_base_url=os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/"),
         pse_page_base=_int(os.getenv("PSE_PAGE_BASE"), 1),
         cache_dir=Path(os.getenv("CACHE_DIR", "./cache")),
@@ -177,7 +184,7 @@ def load_settings() -> Settings:
         metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 3600),
         page_url_ttl_seconds=_int(os.getenv("PAGE_URL_TTL_SECONDS"), 3600),
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
-        showcase_nav=_nav_list(os.getenv("SHOWCASE_NAV")),
-        home_publications=_int(os.getenv("HOME_PUBLICATIONS"), 10),
+        home_groups=_home_groups(os.getenv("HOME_GROUPS")),
+        home_publications=_int(os.getenv("HOME_PUBLICATIONS"), 20),
     )
     return settings

@@ -1,1 +1,1 @@
-"""EHOPDS — OPDS-PSE streaming server for E-Hentai.org."""
+"""PandaOPDS — OPDS-PSE streaming server for E-Hentai.org."""

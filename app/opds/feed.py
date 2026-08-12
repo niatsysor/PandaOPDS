@@ -83,10 +83,10 @@ class FeedBuilder:
         etree.SubElement(feed, f"{{{NS_ATOM}}}title").text = title
         etree.SubElement(feed, f"{{{NS_ATOM}}}id").text = f"urn:ehentai:{title}"
         etree.SubElement(feed, f"{{{NS_ATOM}}}updated").text = updated
-        etree.SubElement(feed, f"{{{NS_ATOM}}}author").text = "EHOPDS"
+        etree.SubElement(feed, f"{{{NS_ATOM}}}author").text = "PandaOPDS"
         # feed-level links
-        self._link(feed, REL_SELF, self.href("/opds/v1.2"), MIME_NAV, "EHOPDS")
-        self._link(feed, REL_START, self.href("/opds/v1.2"), MIME_NAV, "EHOPDS")
+        self._link(feed, REL_SELF, self.href("/opds/v1.2"), MIME_NAV, "PandaOPDS")
+        self._link(feed, REL_START, self.href("/opds/v1.2"), MIME_NAV, "PandaOPDS")
         self._link(
             feed, REL_SEARCH, self.href("/opds/v1.2/search.xml"), MIME_OPEN_SEARCH, "Search"
         )
@@ -139,7 +139,7 @@ class FeedBuilder:
     def root_feed(self, nav_entries: list[tuple[str, str, str]]) -> str:
         """Root navigation feed. `nav_entries` are (title, href, summary)."""
         now = _iso()
-        feed = self._feed("EHOPDS", now, MIME_NAV)
+        feed = self._feed("PandaOPDS", now, MIME_NAV)
         for title, href, summary in nav_entries:
             entry = FeedEntry(
                 id=f"urn:ehentai:subsection:{title.lower()}",
@@ -160,7 +160,7 @@ class FeedBuilder:
         )
         etree.SubElement(root, f"{{{NS_OPENSEARCH}}}ShortName").text = "E-Hentai"
         etree.SubElement(root, f"{{{NS_OPENSEARCH}}}Description").text = (
-            "Search E-Hentai galleries via EHOPDS"
+            "Search E-Hentai galleries via PandaOPDS"
         )
         etree.SubElement(root, f"{{{NS_OPENSEARCH}}}InputEncoding").text = "UTF-8"
         url = etree.SubElement(root, f"{{{NS_OPENSEARCH}}}Url")

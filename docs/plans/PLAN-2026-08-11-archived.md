@@ -1,4 +1,4 @@
-# 初期实施计划（EHOPDS）
+# 初期实施计划（PandaOPDS）
 
 > 目标：实现 OPDS-PSE 串流服务器，代理 E-Hentai.org，服务自研阅读器客户端（对标 Panels）。
 > 技术栈：Python + FastAPI + uvicorn + httpx + lxml。

@@ -1,5 +1,5 @@
 [project]
-name = "ehopds"
+name = "pandaopds"
 version = "0.1.0"
 description = "OPDS-PSE streaming server proxying E-Hentai.org"
 requires-python = ">=3.11"

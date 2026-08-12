@@ -1,6 +1,6 @@
-# EHOPDS 客户端元数据手册
+# PandaOPDS 客户端元数据手册
 
-面向**自研阅读器**开发者。描述 EHOPDS 输出的 OPDS 1.2（Atom）与 OPDS 2.0（JSON）全部文档结构、字段、取值与渲染规则。通用客户端（对标 Panels）消费标准层即可；自研客户端额外消费 `extensions` 私货层与 `showcase` 布局标记。
+面向**自研阅读器**开发者。描述 PandaOPDS 输出的 OPDS 1.2（Atom）与 OPDS 2.0（JSON）全部文档结构、字段、取值与渲染规则。通用客户端（对标 Panels）消费标准层即可；自研客户端额外消费 `extensions` 私货层。
 
 ---
 
@@ -21,16 +21,15 @@
 
 ## 2. 主页文档（`GET /opds/v2.0`）——设计主页的核心
 
-文档同时含 `navigation[]`（导航/展示区块来源）与顶层 `publications[]`（Latest 兜底网格）。真实输出：
+文档包含 `navigation[]`（纯导航链接）和 `groups[]`（含内联 publication 预览的分组区块，OPDS 2.0 §2.5）。真实输出：
 
 ```json
 {
-  "metadata": { "title": "EHOPDS", "identifier": "urn:ehentai:root", "modified": "2026-08-11T15:31:30Z" },
+  "metadata": { "title": "PandaOPDS", "identifier": "urn:ehentai:root", "modified": "2026-08-11T15:31:30Z" },
   "links": [
-    { "href": "/opds/v2.0", "rel": "self", "type": "application/opds+json;profile=navigation", "title": "EHOPDS" },
-    { "href": "/opds/v2.0", "rel": "start", "type": "application/opds+json;profile=navigation", "title": "EHOPDS" },
-    { "href": "/opds/v2.0/gallery?query={searchTerms}", "rel": "search", "type": "application/opds+json;profile=acquisition", "title": "Search" },
-    { "href": "/opds/v2.0/gallery?next=999", "rel": "next", "type": "application/opds+json;profile=acquisition", "title": "Next page" }
+    { "href": "/opds/v2.0", "rel": "self", "type": "application/opds+json;profile=navigation", "title": "PandaOPDS" },
+    { "href": "/opds/v2.0", "rel": "start", "type": "application/opds+json;profile=navigation", "title": "PandaOPDS" },
+    { "href": "/opds/v2.0/gallery?query={searchTerms}", "rel": "search", "type": "application/opds+json;profile=acquisition", "title": "Search" }
   ],
   "navigation": [
     {
@@ -38,8 +37,7 @@
         "title": "Watched",
         "identifier": "urn:ehentai:subsection:watched",
         "modified": "2026-08-11T15:31:30Z",
-        "description": "Watched galleries",
-        "extensions": { "layout": "showcase" }
+        "description": "Watched galleries"
       },
       "links": [
         { "href": "/opds/v2.0/gallery?query=watched", "rel": "subsection",
@@ -47,54 +45,70 @@
       ]
     }
   ],
-  "publications": [ "…Latest 前 10 条 publication（见 §3）…" ]
+  "groups": [
+    {
+      "metadata": {
+        "title": "Latest",
+        "identifier": "urn:ehentai:group:latest",
+        "modified": "2026-08-11T15:31:30Z"
+      },
+      "links": [
+        { "rel": "self", "href": "/opds/v2.0/gallery",
+          "type": "application/opds+json;profile=acquisition", "title": "Latest" }
+      ],
+      "publications": [ "…前 N 条 publication（见 §3）…" ]
+    }
+  ]
 }
 ```
 
-### 2.1 导航项（`navigation[]` 元素）字段
+### 2.1 分区逻辑
+
+| 组件 | 内容 | 说明 |
+|---|---|---|
+| `groups[]` | 内联 publication 预览的分组区块 | `HOME_GROUPS` 环境变量控制哪些区块出现在首页（默认 `latest,popular,toplist:yesterday,toplist:month`） |
+| `navigation[]` | 纯导航链接（不含 extensions） | 不在 `HOME_GROUPS` 中的区块退化为导航链接；Watched/Favorites 无 IPB cookie 时不输出 |
+| `links[].rel="search"` | 搜索模板 | 顶层 link，客户端替换 `{searchTerms}` 即得搜索结果 |
+
+### 2.2 groups[] 元素结构（OPDS 2.0 标准，§2.5）
 
 | 字段 | 说明 |
 |---|---|
-| `metadata.title` | 区块/入口标题（如 `Watched`、`Toplist: Yesterday`） |
-| `metadata.identifier` | `urn:ehentai:subsection:{title 小写}`（含空格/冒号原样，如 `…:subsection:toplist: yesterday`） |
+| `metadata.title` | 区块标题（如 `Latest`、`Popular`、`Toplist: Yesterday`） |
+| `metadata.identifier` | `urn:ehentai:group:{key}` |
 | `metadata.modified` | ISO8601（UTC） |
-| `metadata.description` | 一句话描述（上游 summary 槽位） |
-| `metadata.extensions.layout` | **私货**：`list`（缺省，普通导航）\| `showcase`（展开为网格区块）。通用客户端忽略此字段，照常渲染为导航列表 |
-| `links[0]` | `rel="subsection"`，`href` = 该区块的完整采集文档；`type` = acquisition |
+| `links[0]` | `rel="self"`，`href` = 该区块的完整采集文档 |
+| `publications[]` | 内联预览条目（前 `HOME_PUBLICATIONS` 条，默认 20），字段见 §3 |
 
-**主页导航项清单**（依登录态/配置变化）：
+每个 group 是 OPDS 2.0 标准结构——**任何兼容客户端均可原生渲染为分栏网格**，无需私货标记。
 
-| title | href | 出现条件 |
-|---|---|---|
-| Watched | `/opds/v2.0/gallery?query=watched` | 有 IPB cookie |
-| Favorites | `/opds/v2.0/gallery?query=favorites` | 有 IPB cookie |
-| Popular | `/opds/v2.0/gallery?query=popular` | 恒有 |
-| Toplist: Yesterday | `/opds/v2.0/toplist?period=yesterday` | 恒有 |
-| Toplist: Past Month | `/opds/v2.0/toplist?period=month` | 恒有 |
-| Toplist: Past Year | `/opds/v2.0/toplist?period=year` | 恒有 |
-| Toplist: All Time | `/opds/v2.0/toplist?period=alltime` | 恒有 |
+### 2.3 navigation[] 元素结构
 
-> **Home 项不存在**：主页的"最新内容"由顶层 `publications[]` 承担（见 §2.3）。
+| 字段 | 说明 |
+|---|---|
+| `metadata.title` | 导航入口标题 |
+| `metadata.identifier` | `urn:ehentai:subsection:{title 小写}` |
+| `metadata.description` | 一句话描述 |
+| `links[0]` | `rel="subsection"`，`href` = 完整采集文档 |
 
-### 2.2 showcase 布局标记（server-driven 布局）
+> **不再有 `extensions.layout` 私货**：showcase 机制已被 groups 取代。`navigation[]` 中所有条目均为纯导航链接，客户端按标准 `subsection` 语义处理即可。
 
-`extensions.layout = "showcase"` 是 v2.0 专属私货（v1.2 永不出现），语义：**该导航项应在主页被展开为网格预览区块**。
+### 2.4 所有已知区块清单
 
-**客户端渲染规则**：
-1. 遍历 `navigation[]`，检查 `metadata.extensions.layout`：
-   - 无 `extensions` 或 `layout == "list"` → 渲染为普通导航项（可点击，进入 `links[0].href`）。
-   - `layout == "showcase"` → **异步请求 `links[0].href`**，取返回 acquisition feed 的 `publications[]` 前 N 条（N 为客户端常量，建议 5），渲染为该区块的网格；区块标题 = `metadata.title`；点击区块条目进入详情，点区块标题进入完整列表（即 `links[0].href`）。
-   - 未知 `layout` 值 → 按普通导航渲染（向前兼容，服务端可新增布局类型而无需重建客户端）。
-2. 顶层 `publications[]`（若存在）→ 渲染为 **"Latest" 区块**（标题固定为 Latest），内容即最新上传。
+| title | key | href | 出现条件 |
+|---|---|---|---|
+| Latest | `latest` | `/opds/v2.0/gallery` | 恒有（默认在 groups） |
+| Watched | `watched` | `/opds/v2.0/gallery?query=watched` | 有 IPB cookie |
+| Favorites | `favorites` | `/opds/v2.0/gallery?query=favorites` | 有 IPB cookie |
+| Popular | `popular` | `/opds/v2.0/gallery?query=popular` | 恒有（默认在 groups） |
+| Toplist: Yesterday | `toplist:yesterday` | `/opds/v2.0/toplist?period=yesterday` | 恒有（默认在 groups） |
+| Toplist: Past Month | `toplist:month` | `/opds/v2.0/toplist?period=month` | 恒有（默认在 groups） |
+| Toplist: Past Year | `toplist:year` | `/opds/v2.0/toplist?period=year` | 恒有（默认在 navigation） |
+| Toplist: All Time | `toplist:alltime` | `/opds/v2.0/toplist?period=alltime` | 恒有（默认在 navigation） |
 
-**服务端调控**：`SHOWCASE_NAV` 环境变量（逗号分隔 key：`watched`/`favorites`/`popular`/`toplist:yesterday`/`toplist:month`/`toplist:year`/`toplist:alltime`；缺省 = 全部项挂 showcase）。通用客户端看不到任何 flag，主页退化为"导航列表 + Latest 网格"。
-
-### 2.3 顶层 `publications[]`（Latest 兜底）
-
-- 恒为 **Latest**（最新上传）前 `HOME_PUBLICATIONS` 条（默认 10），字段与任何 publication 相同（§3）。
-- 是 OPDS 2.0 标准顶层字段——**任何客户端无条件渲染为网格**，不依赖 showcase 标记。
-- `rel="next"`（若有）指向 Latest 第 2 页（`/opds/v2.0/gallery?next={lastGid}`）。
-- 上游故障时降级为空数组（`navigation` 照常）。
+**服务端调控**：
+- `HOME_GROUPS` 环境变量（逗号分隔 key）控制哪些区块在 `groups[]` 中内联预览；未列出的落入 `navigation[]`。
+- `HOME_PUBLICATIONS`（默认 20）控制每个 group 的预览条目数。
 
 ---
 
@@ -255,7 +269,7 @@
 
 ## 7. v1.2（Atom）对照——仅标准，无私货
 
-**约束：v1.2 不输出任何 `extensions`/`showcase` 标记，也不在根 feed 混入采集条目。** 自研客户端如需 v1.2 兼容，只消费标准字段。
+**约束：v1.2 不输出任何 `extensions` 标记，也不在根 feed 混入采集条目。** 自研客户端如需 v1.2 兼容，只消费标准字段。
 
 ### 7.1 根导航 entry
 
@@ -288,10 +302,9 @@
 ## 8. 客户端渲染规则速查（自研阅读器）
 
 1. 请求 `/opds/v2.0` 作为主页文档。
-2. 顶层 `publications[]` → 渲染为 **Latest 网格区块**（标题 "Latest"）。
-3. `navigation[]` 中 `extensions.layout == "showcase"` 的项 → 异步请求其 `subsection` href，取前 N 条渲染为网格区块（标题 = `metadata.title`）；未知/缺失 → 普通导航项。
-4. 点击区块条目 → 走 `acquisition` 或直接 `stream`（自研客户端可注册章节）；点区块标题 → 完整列表（`subsection` href）。
-5. 搜索：用顶层 `search` link 的 JSON 模板替换 `{searchTerms}`。
-6. 分页：`rel="next"`（gallery 传 `next`，toplist 传 `page`）。
-7. 详情：`/opds/v2.0/gallery/{gid}/{token}` 取完整 tags（status/style）；首页/列表的 tags 已含高亮 overlay，可直接渲染。
-8. 失效兜底：主页上游故障时 `publications` 为空数组（导航仍可用）；`SHOWCASE_NAV`/`HOME_PUBLICATIONS` 为服务端开关，客户端无需感知。
+2. `groups[]` → 每个 group 直接渲染为一个网格区块：标题 = `metadata.title`，内容 = `publications[]`。点击区块条目 → 走 `acquisition` 或直接 `stream`；点击区块标题 → 完整列表（`links[0].href`）。通用客户端同样原生支持 groups，无需任何私货解析。
+3. `navigation[]` → 渲染为普通导航列表（可点击进入完整列表）。
+4. 搜索：用顶层 `search` link 的 JSON 模板替换 `{searchTerms}`。
+5. 分页：`rel="next"`（gallery 传 `next`，toplist 传 `page`）。
+6. 详情：`/opds/v2.0/gallery/{gid}/{token}` 取完整 tags（status/style）；首页/列表的 tags 已含高亮 overlay，可直接渲染。
+7. 失效兜底：单个 group 上游故障时该 group 不出现在 `groups[]` 中（其他 groups 和 navigation 照常）；`HOME_GROUPS`/`HOME_PUBLICATIONS` 为服务端开关，客户端无需感知。

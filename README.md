@@ -1,4 +1,4 @@
-# EHOPDS
+# PandaOPDS
 
 **OPDS-PSE 串流服务器**：E-Hentai.org 的中转代理，输出 **OPDS 1.2（Atom）** 与 **OPDS 2.0（JSON）** 双版本目录 + OPDS-PSE 串流链接，服务自研阅读器客户端（对标 Panels）。
 
@@ -127,6 +127,6 @@ RUN_EH_INTEGRATION=1 python -m pytest tests/test_integration.py   # 真实闭环
 
 ## 注意
 
-- EHOPDS 是服务器（多客户端、单 IP 集中请求），比客户端更易触发 E-Hentai 封禁。请保持节流参数默认值，善用缓存。
+- PandaOPDS 是服务器（多客户端、单 IP 集中请求），比客户端更易触发 E-Hentai 封禁。请保持节流参数默认值，善用缓存。
 - 图片限额触发时返回 429；IP 被封 / 超限会触发全局熔断并返回 503。
 - 本仓库仅包含中转代理逻辑，不托管任何内容。

@@ -150,7 +150,7 @@ class EHService:
         params: dict[str, str] = {"tl": str(tl)}
         if page > 1:
             params["p"] = str(page)
-        return await self._list_page(f"toplist:{period}:{page}", "/toplist.php", params)
+        return await self._list_page(f"toplist:{period}:{page}", "https://e-hentai.org/toplist.php", params)
 
     async def _html_get(self, path: str, params: dict[str, str] | None = None) -> str:
         async with self.throttle.acquired(KIND_HTML):

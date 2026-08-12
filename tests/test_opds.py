@@ -37,7 +37,7 @@ def test_root_feed_structure():
     xml = FeedBuilder(_settings()).root_feed(nav_entries)
     root = _parse(xml)
     assert root.tag == f"{{{NS_ATOM}}}feed"
-    assert root.find(f"{{{NS_ATOM}}}title").text == "EHOPDS"
+    assert root.find(f"{{{NS_ATOM}}}title").text == "PandaOPDS"
     entries = root.findall(f"{{{NS_ATOM}}}entry")
     titles = [e.find(f"{{{NS_ATOM}}}title").text for e in entries]
     assert titles == ["Home", "Watched", "Favorites", "Popular", "Search"]
