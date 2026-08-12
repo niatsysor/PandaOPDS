@@ -212,11 +212,12 @@ class Opds2Builder:
     ) -> dict:
         """Build one publication object.
 
-        Standard fields only for generic clients: `subjects` is a flat string
-        array of tag texts (Komga-style), `numberOfPages` is the RWPM-standard
-        page count. All EH-specific data (rating, Japanese title, category,
-        featured-tag styles, ...) lives in `extensions` — the project's
-        single private-extension bucket consumed by the first-party client.
+        Standard fields only for generic clients: `subject` (RWPM) is a flat
+        string array of tag texts (Komga-style), `numberOfPages` is the
+        RWPM-standard page count. All EH-specific data (rating, Japanese title,
+        category, featured-tag styles, ...) lives in `extensions` — the
+        project's single private-extension bucket consumed by the first-party
+        client.
         """
         identifier = f"urn:ehentai:gallery:{gid}:{token}"
         md: dict = {"title": title, "identifier": identifier, "modified": modified}

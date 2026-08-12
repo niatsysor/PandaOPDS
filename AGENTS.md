@@ -194,8 +194,8 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 
 **字段分层约定（本项目核心）**：
 
-- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subjects`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subjects` 为拍平标签字符串数组（Komga 风格，含全部 `ns:key` 标签，不含分类）。
-- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`tags`（完整标签：`namespace`/`key` + 仅非常规时输出的 `status`（`skepticism`/`incorrect`）+ 仅高亮标签输出的 `style`（`color`/`borderColor`/`background`，来自上游 HTML inline style，`!important` 已剥离））。`category` 刻意不进 `subjects`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subjects`。
+- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，含全部 `ns:key` 标签，不含分类）。
+- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`tags`（完整标签：`namespace`/`key` + 仅非常规时输出的 `status`（`skepticism`/`incorrect`）+ 仅高亮标签输出的 `style`（`color`/`borderColor`/`background`，来自上游 HTML inline style，`!important` 已剥离））。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
 - 标签高亮数据来源：列表 feed 用列表页解析的高亮标签子集（布局相关：compact/extended 全量、thumbnail 仅高亮、minimal 无）覆盖 gdata 标签；详情文档用详情页 `#taglist`（完整 + 状态 + 样式，详情页缓存 1h）。
 
 ```json
@@ -206,7 +206,7 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
     "modified": "{iso8601}",
     "authors": [{"name": "{uploader}"}],
     "language": ["{language}"],
-    "subjects": ["{ns}:{key}", "..."],
+    "subject": ["{ns}:{key}", "..."],
     "numberOfPages": {filecount},
     "description": "{语言/页数/上传者/评分/大小}",
     "published": "{iso8601}",

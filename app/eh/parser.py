@@ -62,6 +62,10 @@ _PAGECOUNT_SELECTORS = [
     ".gl4c.glhide > div",              # Compact
     ".gl3e > div",                     # Extended
 ]
+# Index of the "N pages" div within each page-count selector's matches
+# (JHenTai _parse*GalleryPageCount): thumbnail/compact use the 2nd div,
+# extended the 5th (.gl3e children: category/date/rating/uploader/N pages/torrents).
+_PAGECOUNT_INDEX = {"thumbnail": 1, "compact": 1, "extended": 4}
 
 
 def _el(root: Any, css: str) -> Any | None:
@@ -129,15 +133,18 @@ def _parse_list_tags(row: Any, view: str) -> list[GalleryTag]:
     (voted-up) tags additionally carry an inline style. Layout dependent:
     compact/extended show the full tag set, thumbnail shows only featured tags,
     minimal shows none. Aligns with JHenTai `_parseCompactGalleryTags` /
-    `_parseExtendedGalleryTags` (verified on real compact pages).
+    `_parseExtendedGalleryTags` (verified on the real compact and extended
+    fixtures).
     """
     if view == "compact":
         divs = _el(row, "div.gt[title], div.gtl[title], div.gtw[title]")
     elif view == "extended":
-        # JHenTai selector minus <tbody> (real pages have none; lxml adds none)
+        # JHenTai selector minus <tbody> (real pages have none; lxml adds none).
+        # The tag table sits in the 2nd div of .gl4e.glname (1st is .glink);
+        # verified against tests/fixtures/list_page_extended.html.
         divs = _el(
             row,
-            ".gl2e > div > a > div > div:nth-child(1) > table > tr > td > div[title]",
+            ".gl2e > div > a > div > div:nth-child(2) > table > tr > td > div[title]",
         )
     else:
         return []
@@ -227,8 +234,9 @@ def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
     page_count: int | None = None
     for sel in _PAGECOUNT_SELECTORS:
         divs = _el(row, sel)
-        if len(divs) >= 2:
-            m = re.match(r"(\d+)", _text(divs[1]))
+        idx = _PAGECOUNT_INDEX.get(view, 1)
+        if len(divs) > idx:
+            m = re.match(r"(\d+)", _text(divs[idx]))
             if m:
                 page_count = int(m.group(1))
                 break

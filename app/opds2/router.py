@@ -60,7 +60,7 @@ def _all_tags(meta: GalleryMetadata) -> list[GalleryTag]:
     return out
 
 
-# Namespaces that should appear in the standard `subjects` array.
+# Namespaces that should appear in the standard `subject` array.
 # These are the content-rating / target-audience dimensions that generic
 # OPDS clients can meaningfully consume.  All other tags are available in
 # full detail inside `extensions.tags`.

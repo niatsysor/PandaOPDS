@@ -324,27 +324,34 @@ def test_parse_list_page_compact_tags():
 
 
 # --------------------------------------------------------------------------
-# extended view tag parsing (cover rows + tag-only rows)
+# extended view tag parsing (cover rows; full tag set in the nested table)
 # --------------------------------------------------------------------------
 
 EXTENDED_TAGS_HTML = """
 <html><body>
 <table class="itg glte">
-  <!-- Cover row: gallery info + nested tag table -->
+  <!-- Cover row: gallery info + nested tag table (full tag set, mirroring
+       tests/fixtures/list_page_extended.html) -->
   <tr>
     <td class="gl1e" style="width:250px"><div><a href="https://e-hentai.org/g/100/aaa/"><img src="/x/cover.jpg"></a></div></td>
     <td class="gl2e">
       <div>
         <div class="gl3e">
           <div class="cn">Manga</div>
+          <div onclick="popUp('https://e-hentai.org/gallerypopups.php?gid=100&amp;t=aaa')" id="posted_100">2026-08-12 00:00</div>
+          <div class="ir" style="background-position:0px -21px;opacity:1"></div>
+          <div><a href="https://e-hentai.org/uploader/u1">u1</a></div>
+          <div>42 pages</div>
+          <div class="gldown"></div>
         </div>
         <a href="https://e-hentai.org/g/100/aaa/">
-          <div class="gl4e glname">
+          <div class="gl4e glname" style="min-height:100px">
             <div class="glink">Extended Gallery</div>
             <div>
               <table>
                 <tr><td class="tc">language:</td><td><div class="gt" title="language:chinese">chinese</div></td></tr>
                 <tr><td class="tc">female:</td><td><div class="gt" title="female:ahegao" style="color:#f1f1f1;border-color:#048751;background:radial-gradient(#048751,#24A771) !important">ahegao</div></td></tr>
+                <tr><td class="tc">parody:</td><td><div class="gt" title="parody:original">original</div><div class="gtl" title="parody:fate grand order" style="color:#fff;border-color:#f00;background:radial-gradient(#f00,#a00) !important">fate grand order</div></td></tr>
               </table>
             </div>
           </div>
@@ -352,22 +359,14 @@ EXTENDED_TAGS_HTML = """
       </div>
     </td>
   </tr>
-  <!-- Tag-only row: belongs to the gallery above -->
-  <tr>
-    <td class="tc">parody:</td>
-    <td>
-      <div class="gt" title="parody:original">original</div>
-      <div class="gtl" title="parody:fate grand order" style="color:#fff;border-color:#f00;background:radial-gradient(#f00,#a00) !important">fate grand order</div>
-    </td>
-  </tr>
-  <!-- Another cover row -->
+  <!-- Another cover row (empty nested table: no tags) -->
   <tr>
     <td class="gl1e" style="width:250px"><div><a href="https://e-hentai.org/g/200/bbb/"><img src="/x/cover2.jpg"></a></div></td>
     <td class="gl2e">
       <div>
-        <div class="gl3e"><div class="cn">Doujinshi</div></div>
+        <div class="gl3e"><div class="cn">Doujinshi</div><div>2026-08-12 00:01</div><div class="ir"></div><div></div><div>5 pages</div><div class="gldown"></div></div>
         <a href="https://e-hentai.org/g/200/bbb/">
-          <div class="gl4e glname">
+          <div class="gl4e glname" style="min-height:50px">
             <div class="glink">Second Gallery</div>
             <div><table></table></div>
           </div>
@@ -381,7 +380,7 @@ EXTENDED_TAGS_HTML = """
 
 
 def test_parse_list_page_extended_tags():
-    """Extended view: cover row tags + tag-only row tags aggregate correctly."""
+    """Extended view: cover-row nested table carries the full tag set."""
     info = parse_list_page(EXTENDED_TAGS_HTML)
     assert len(info.galleries) == 2
 
@@ -389,7 +388,8 @@ def test_parse_list_page_extended_tags():
     assert g1.gid == 100
     assert g1.title == "Extended Gallery"
     assert g1.category == "Manga"
-    # Tags from cover row nested table + tag-only row
+    assert g1.page_count == 42  # extended page-count div index (5th child)
+    # Tags from the cover row's nested tag table
     assert len(g1.tags) == 4
     tag_strs = [str(t) for t in g1.tags]
     assert "language:chinese" in tag_strs
@@ -403,7 +403,7 @@ def test_parse_list_page_extended_tags():
     assert ahegao.style.color == "#f1f1f1"
     assert ahegao.style.background == "radial-gradient(#048751,#24A771)"
 
-    # Tag from tag-only row with featured style
+    # Featured tag inside the nested table carries style
     fate = next(t for t in g1.tags if t.key == "fate grand order")
     assert fate.style is not None
     assert fate.style.color == "#fff"
@@ -413,10 +413,12 @@ def test_parse_list_page_extended_tags():
     orig = next(t for t in g1.tags if t.key == "original")
     assert orig.style is None
 
-    # Second gallery (no tags beyond the empty nested table)
+    # Second gallery (empty nested table: no tags, page count from 5th div)
     g2 = info.galleries[1]
     assert g2.gid == 200
     assert g2.title == "Second Gallery"
+    assert g2.page_count == 5
+    assert g2.tags == []
 
 
 def test_parse_real_extended_fixture():

@@ -109,8 +109,8 @@ def test_publication_metadata_and_links():
     assert md["authors"] == [{"name": "uploader"}]
     assert md["language"] == ["Chinese"]
     assert md["published"] == "2023-11-14T22:13:20Z"
-    # standard subjects: flat tag strings (Komga-style), no category/scheme
-    assert md["subjects"] == ["female:netorare", "parody:zenless zone zero"]
+    # standard subject: flat tag strings (Komga-style), no category/scheme
+    assert md["subject"] == ["female:netorare", "parody:zenless zone zero"]
     # RWPM-standard page count
     assert md["numberOfPages"] == 42
 
@@ -147,7 +147,7 @@ def test_publication_standard_fields_omitted_when_unset():
     builder = Opds2Builder(_settings())
     pub = builder.publication(gid=1, token="t", title="T", modified=_iso())
     md = pub["metadata"]
-    assert "subjects" not in md
+    assert "subject" not in md
     assert "numberOfPages" not in md
     assert "extensions" not in md
     assert "authors" not in md
