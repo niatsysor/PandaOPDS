@@ -65,6 +65,24 @@ class Settings:
     page_url_ttl_seconds: int = 3600
     list_cache_ttl_seconds: int = 600  # list-page parse results (search/popular/toplist...)
 
+    # --- List page display mode ---
+    # E-Hentai list pages support four views (Thumbnail / Extended / Compact /
+    # Minimal). Compact and Extended carry the full tag set; Thumbnail shows
+    # only featured tags; Minimal shows none. The server forces this layout on
+    # every list request via ``inline_set`` so it always receives the richest
+    # parseable content, regardless of the user's web browser default.
+    # Accepted values: "extended" (default), "compact", "minimal", "thumbnail".
+    # Mapped to inline_set keys: dm_e / dm_c / dm_m / dm_t.
+    list_layout: str = "extended"
+
+    # --- uconfig profile isolation ---
+    # Optional: name of a dedicated E-Hentai settings profile created on
+    # uconfig.php. When set, the service creates (once) and switches to this
+    # profile during ``establish_session``, isolating the service's uconfig
+    # preferences (layout, language, exclusions) from the user's browser
+    # profile. Leave empty to only use per-request ``inline_set`` overrides.
+    eh_profile: str = ""
+
     # --- Home navigation (v2.0 server-driven layout) ---
     # Sections rendered as ``groups[]`` on the root OPDS 2.0 document, each
     # carrying an inline ``publications[]`` preview (OPDS 2.0 §2.5). Keys:
@@ -147,10 +165,21 @@ class Settings:
         return _SITE_HOSTS[EH_SITE_EHENTAI] if self.is_exhentai else _SITE_HOSTS[EH_SITE_EXHENTAI]
 
     # --- validation ---
+    @property
+    def inline_set_key(self) -> str:
+        """The ``inline_set`` query parameter value matching ``list_layout``."""
+        _map = {"extended": "dm_e", "compact": "dm_c", "minimal": "dm_m", "thumbnail": "dm_t"}
+        return _map.get(self.list_layout, "dm_e")
+
     def validate(self) -> None:
         if self.eh_site not in _SITE_HOSTS:
             raise ConfigError(
                 f"EH_SITE must be one of {list(_SITE_HOSTS)}, got {self.eh_site!r}"
+            )
+        if self.list_layout not in ("extended", "compact", "minimal", "thumbnail"):
+            raise ConfigError(
+                f"LIST_LAYOUT must be one of extended/compact/minimal/thumbnail, "
+                f"got {self.list_layout!r}"
             )
         # IPB cookies are optional: without them the server still serves public
         # content (Latest/Popular/Toplist/Search) and simply omits the auth-only
@@ -240,6 +269,8 @@ def load_settings() -> Settings:
         metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 3600),
         page_url_ttl_seconds=_int(os.getenv("PAGE_URL_TTL_SECONDS"), 3600),
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
+        list_layout=os.getenv("LIST_LAYOUT", "extended").strip().lower(),
+        eh_profile=os.getenv("EH_PROFILE", "").strip(),
         home_groups=_home_groups(os.getenv("HOME_GROUPS")),
         home_publications=_int(os.getenv("HOME_PUBLICATIONS"), 20),
         facets=_facets(os.getenv("FACETS")),

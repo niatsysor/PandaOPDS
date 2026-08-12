@@ -92,8 +92,15 @@ class EHService:
         List pages are the cheapest upstream objects but the home feed and
         toplist feeds hit them repeatedly, so parse results are cached for
         `list_cache_ttl_seconds` (default 10min).
+
+        An ``inline_set`` parameter is always injected so the page renders in
+        the server's configured layout (default ``dm_e`` / Extended, which
+        exposes the full tag set and richest metadata) regardless of the
+        user's web-browser default view.
         """
-        query = "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
+        params = dict(params or {})
+        params["inline_set"] = self.settings.inline_set_key
+        query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
         key = self._mem_key("list", kind, query)
 
         async def _fetch() -> GalleryPageInfo:

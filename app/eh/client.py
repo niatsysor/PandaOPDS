@@ -70,6 +70,10 @@ class EHClient:
         e-hentai: one GET to the home page refreshes the session.
         exhentai: authenticate on e-hentai first, then touch exhentai once so
         its response seeds igneous for the exhentai.org domain in the jar.
+
+        When ``eh_profile`` is configured, a dedicated uconfig profile is
+        created (once) and made active so the service's list-layout preference
+        is isolated from the user's web-browser profile.
         """
         async with self._session_lock:
             if self._session_ready:
@@ -82,6 +86,11 @@ class EHClient:
                     )
                 # 2) touch the target site (exhentai sets igneous here)
                 await self._request("GET", self.settings.http_origin + "/")
+
+                # 3) create / switch to the dedicated uconfig profile (optional)
+                if self.settings.eh_profile:
+                    await self._ensure_profile(self.settings.eh_profile)
+
                 self._session_ready = True
                 logger.info(
                     "E-Hentai session established (site=%s)",
@@ -91,6 +100,85 @@ class EHClient:
                 # leave _session_ready False; caller maps to HTTP status and
                 # the circuit breaker trips on hard failures
                 raise
+
+    async def _ensure_profile(self, profile_name: str) -> None:
+        """Create (if not exists) and switch to a named uconfig profile.
+
+        Strategy (covers all three edge cases):
+
+        1. **Doesn't exist yet** → POST ``profile_action=create`` to create
+           and switch in one step (JHenTai-aligned).
+        2. **Already exists** → parse the uconfig page for the existing
+           profile's numeric ID, then POST ``profile_set=<id>`` to switch.
+        3. **Slots full / creation rejected** → fall back silently; the
+           per-request ``inline_set`` override is always active regardless.
+
+        Profile IDs and names are read from ``#profile_form > select > option``
+        elements on the uconfig page (mirrors JHenTai's
+        ``settingPage2SiteSetting`` parser).
+        """
+        import re
+
+        # -- locate existing profile (if any) ------------------------------
+        profile_id: int | None = None
+        try:
+            html_text = await self.get_html("/uconfig.php")
+            # Option values are numeric profile IDs; text is the profile name.
+            for m in re.finditer(
+                r'<option\s+value="(\d+)"[^>]*>\s*'
+                + re.escape(profile_name)
+                + r'\s*</option>',
+                html_text,
+            ):
+                profile_id = int(m.group(1))
+                break
+        except EHException:
+            logger.debug("could not read uconfig page for profile check")
+
+        # -- Phase 2a: profile already exists — just switch -----------------
+        if profile_id is not None:
+            try:
+                resp = await self._request(
+                    "POST",
+                    f"{self.settings.http_origin}/uconfig.php",
+                    form_data={"profile_set": str(profile_id)},
+                    referer=f"{self.settings.http_origin}/uconfig.php",
+                )
+                logger.info(
+                    "uconfig switched to existing profile %r (id=%s, status %s)",
+                    profile_name, profile_id, resp.status_code,
+                )
+                return
+            except EHException:
+                logger.warning(
+                    "uconfig switch to existing profile %r failed; "
+                    "list pages will still use inline_set override",
+                    profile_name,
+                )
+                return
+
+        # -- Phase 2b: profile does not exist — create + switch -------------
+        try:
+            resp = await self._request(
+                "POST",
+                f"{self.settings.http_origin}/uconfig.php",
+                form_data={
+                    "profile_action": "create",
+                    "profile_name": profile_name,
+                    "profile_set": "616",  # JHenTai-aligned: switch after create
+                },
+                referer=f"{self.settings.http_origin}/uconfig.php",
+            )
+            logger.info(
+                "uconfig profile %r created (status %s)",
+                profile_name, resp.status_code,
+            )
+        except EHException:
+            logger.warning(
+                "uconfig profile create failed (profile=%r, slots may be full); "
+                "list pages will still use inline_set override",
+                profile_name,
+            )
 
     # -- low-level --------------------------------------------------------
 
@@ -119,6 +207,7 @@ class EHClient:
         *,
         params: dict[str, str] | None = None,
         json_body: dict | None = None,
+        form_data: dict[str, str] | None = None,
         referer: str | None = None,
         stream: bool = False,
     ) -> httpx.Response:
@@ -138,6 +227,8 @@ class EHClient:
                 if json_body is not None:
                     kwargs["json"] = json_body
                     kwargs.setdefault("headers", {})["Content-Type"] = "application/json"
+                if form_data is not None:
+                    kwargs["data"] = form_data
 
                 if stream:
                     resp = await self._client.stream(method, url, **kwargs)
