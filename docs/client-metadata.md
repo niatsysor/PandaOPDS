@@ -126,7 +126,7 @@
 | `language` | [string] | 语言（gdata language 标签，默认 `Japanese`） | 非空时 |
 | `published` | string | = `modified`（上传时间） | 恒有 |
 | `description` | string | `Language: {lang} \| Pages: {n} \| Uploader: {u} \| Rating: {r:.2f} \| Size: {s}`（详情文档另加 `Category: {c}`） | 恒有 |
-| `subjects` | [string] | 拍平标签 `ns:key` 数组（Komga 风格，**不含分类**，去重保序） | 有标签时 |
+| `subject` | [string] | 拍平标签 `ns:key` 数组（Komga 风格，**不含分类**，去重保序） | 有标签时 |
 | `numberOfPages` | int | 页数（= `filecount`） | >0 时 |
 
 ### 3.2 私货层 `extensions`（单一桶，全部 EH 专属字段）
@@ -185,7 +185,7 @@
     "language": ["chinese"],
     "published": "2025-08-11T08:13:20Z",
     "description": "Language: chinese | Pages: 42 | Uploader: leopoldo | Rating: 4.50 | Size: 25.30MB",
-    "subjects": ["language:chinese", "female:netorare", "parody:zenless zone zero"],
+    "subject": ["language:chinese", "female:netorare", "parody:zenless zone zero"],
     "numberOfPages": 42,
     "extensions": {
       "rating": 4.5,

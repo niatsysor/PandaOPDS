@@ -229,7 +229,7 @@ class Opds2Builder:
         if description:
             md["description"] = description
         if subjects:
-            md["subjects"] = subjects
+            md["subject"] = subjects
         if number_of_pages:
             md["numberOfPages"] = number_of_pages
         if extensions:
