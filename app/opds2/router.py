@@ -162,11 +162,12 @@ def _publication(
     extensions: dict | None = None
     if meta:
         all_tags = _all_tags(meta)
-        subjects = _flatten_subjects(all_tags)
         # overlay featured-tag styles parsed from the list page (layout
         # dependent: compact/extended full, thumbnail featured-only, minimal
         # none) onto the gdata tag set
-        extensions = _extensions(meta, _sort_tags(_merge_tags(all_tags, item.tags)))
+        merged = _sort_tags(_merge_tags(all_tags, item.tags))
+        subjects = _flatten_subjects(merged)
+        extensions = _extensions(meta, merged)
 
     return builder.publication(
         gid=item.gid,
@@ -492,8 +493,8 @@ async def gallery_detail(request: Request, gid: int, token: str):
         detail_tags = []
 
     all_tags = _all_tags(meta)
-    subjects = _flatten_subjects(all_tags)
     merged = _sort_tags(_merge_tags(all_tags, detail_tags) if detail_tags else all_tags)
+    subjects = _flatten_subjects(merged)
 
     clean_title, authors = parse_title_authors(meta.title, meta.category)
     pub = builder.publication(
