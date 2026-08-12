@@ -14,6 +14,7 @@ from fastapi.responses import Response
 
 from ..eh.models import GalleryListItem, GalleryMetadata, GalleryPageInfo, GalleryTag
 from ..eh.service import EHService
+from ..eh.title_parser import parse_title_authors
 from ..home_config import (
     Section,
     build_href,
@@ -59,11 +60,20 @@ def _all_tags(meta: GalleryMetadata) -> list[GalleryTag]:
     return out
 
 
+# Namespaces that should appear in the standard `subjects` array.
+# These are the content-rating / target-audience dimensions that generic
+# OPDS clients can meaningfully consume.  All other tags are available in
+# full detail inside `extensions.tags`.
+_SUBJECT_NAMESPACES = {"female", "male", "mixed", "other", "parody"}
+
+
 def _flatten_subjects(tags: list[GalleryTag]) -> list[str]:
-    """Flat deduped "ns:key" strings for the standard `subjects` array."""
+    """Flat deduped "ns:key" strings for gender/audience tags only."""
     seen: set[str] = set()
     out: list[str] = []
     for t in tags:
+        if t.namespace not in _SUBJECT_NAMESPACES:
+            continue
         s = str(t)
         if s not in seen:
             seen.add(s)
@@ -110,14 +120,17 @@ def _tag_payload(t: GalleryTag) -> dict:
 def _extensions(meta: GalleryMetadata, tags: list[GalleryTag]) -> dict:
     """Single private-extension bucket consumed by the first-party client.
 
-    Standard fields stay out: rating, Japanese title, category, size, expunged
-    and the full tag payload (namespace/status/style) all live here.
+    Standard fields stay out: rating, original title, Japanese title,
+    uploader, category, size, expunged and the full tag payload
+    (namespace/status/style) all live here.
     """
     ext: dict = {}
     if meta.rating:
         ext["rating"] = meta.rating
+    ext["originalTitle"] = meta.title
     if meta.title_jpn:
         ext["titleJpn"] = meta.title_jpn
+    ext["uploader"] = meta.uploader or ""
     if meta.filesize:
         ext["sizeBytes"] = meta.filesize
     if meta.expunged:
@@ -128,30 +141,22 @@ def _extensions(meta: GalleryMetadata, tags: list[GalleryTag]) -> dict:
     return ext
 
 
-def _summary(meta: GalleryMetadata | None, item: GalleryListItem) -> str:
-    parts: list[str] = []
-    if meta:
-        parts.append(f"Language: {meta.language}")
-        parts.append(f"Pages: {meta.filecount}")
-        parts.append(f"Uploader: {meta.uploader or 'unknown'}")
-        parts.append(f"Rating: {meta.rating:.2f}")
-        parts.append(f"Size: {meta.size_human}")
-    elif item.page_count:
-        parts.append(f"Pages: {item.page_count}")
-    return " | ".join(parts)
-
-
 def _publication(
     builder: Opds2Builder,
     item: GalleryListItem,
     meta: GalleryMetadata | None,
 ) -> dict:
-    title = meta.title if meta and meta.title else item.title
+    raw_title = meta.title if meta and meta.title else item.title
     modified = _iso(meta.posted) if meta and meta.posted else _iso()
-    author = meta.uploader if meta else ""
     page_count = meta.filecount if meta and meta.filecount else item.page_count
     language = meta.language if meta else ""
-    summary = _summary(meta, item)
+
+    # Parse authors from title; use the clean title as the display title.
+    if meta:
+        clean_title, authors = parse_title_authors(raw_title, meta.category)
+    else:
+        clean_title = raw_title
+        authors = []
 
     subjects: list[str] | None = None
     extensions: dict | None = None
@@ -166,11 +171,10 @@ def _publication(
     return builder.publication(
         gid=item.gid,
         token=item.token,
-        title=title,
+        title=clean_title,
         modified=modified,
-        author=author,
+        authors=authors if authors else None,
         language=language,
-        description=summary,
         page_count=page_count,
         published=modified,
         subjects=subjects,
@@ -451,22 +455,14 @@ async def gallery_detail(request: Request, gid: int, token: str):
     subjects = _flatten_subjects(all_tags)
     merged = _sort_tags(_merge_tags(all_tags, detail_tags) if detail_tags else all_tags)
 
-    summary_parts = [
-        f"Language: {meta.language}",
-        f"Pages: {meta.filecount}",
-        f"Uploader: {meta.uploader or 'unknown'}",
-        f"Rating: {meta.rating:.2f}",
-        f"Category: {meta.category}",
-        f"Size: {meta.size_human}",
-    ]
+    clean_title, authors = parse_title_authors(meta.title, meta.category)
     pub = builder.publication(
         gid=gid,
         token=token,
-        title=meta.title,
+        title=clean_title,
         modified=_iso(meta.posted),
-        author=meta.uploader,
+        authors=authors if authors else None,
         language=meta.language,
-        description=" | ".join(summary_parts),
         page_count=meta.filecount,
         published=_iso(meta.posted),
         subjects=subjects,
@@ -474,7 +470,7 @@ async def gallery_detail(request: Request, gid: int, token: str):
         extensions=_extensions(meta, merged),
     )
     content = builder.acquisition_document(
-        title=meta.title,
+        title=clean_title,
         identifier=f"urn:ehentai:gallery:{gid}:{token}",
         publications=[pub],
         self_href=f"/opds/v2.0/gallery/{gid}/{token}",

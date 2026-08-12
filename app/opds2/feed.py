@@ -201,7 +201,7 @@ class Opds2Builder:
         token: str,
         title: str,
         modified: str,
-        author: str = "",
+        authors: list[str] | None = None,
         language: str = "",
         description: str = "",
         page_count: int | None = None,
@@ -220,8 +220,8 @@ class Opds2Builder:
         """
         identifier = f"urn:ehentai:gallery:{gid}:{token}"
         md: dict = {"title": title, "identifier": identifier, "modified": modified}
-        if author:
-            md["authors"] = [{"name": author}]
+        if authors:
+            md["authors"] = [{"name": n} for n in authors]
         if language:
             md["language"] = [language]
         if published:

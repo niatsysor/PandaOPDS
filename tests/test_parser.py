@@ -323,6 +323,120 @@ def test_parse_list_page_compact_tags():
     assert featured.style.background == "radial-gradient(#048751,#24A771)"
 
 
+# --------------------------------------------------------------------------
+# extended view tag parsing (cover rows + tag-only rows)
+# --------------------------------------------------------------------------
+
+EXTENDED_TAGS_HTML = """
+<html><body>
+<table class="itg glte">
+  <!-- Cover row: gallery info + nested tag table -->
+  <tr>
+    <td class="gl1e" style="width:250px"><div><a href="https://e-hentai.org/g/100/aaa/"><img src="/x/cover.jpg"></a></div></td>
+    <td class="gl2e">
+      <div>
+        <div class="gl3e">
+          <div class="cn">Manga</div>
+        </div>
+        <a href="https://e-hentai.org/g/100/aaa/">
+          <div class="gl4e glname">
+            <div class="glink">Extended Gallery</div>
+            <div>
+              <table>
+                <tr><td class="tc">language:</td><td><div class="gt" title="language:chinese">chinese</div></td></tr>
+                <tr><td class="tc">female:</td><td><div class="gt" title="female:ahegao" style="color:#f1f1f1;border-color:#048751;background:radial-gradient(#048751,#24A771) !important">ahegao</div></td></tr>
+              </table>
+            </div>
+          </div>
+        </a>
+      </div>
+    </td>
+  </tr>
+  <!-- Tag-only row: belongs to the gallery above -->
+  <tr>
+    <td class="tc">parody:</td>
+    <td>
+      <div class="gt" title="parody:original">original</div>
+      <div class="gtl" title="parody:fate grand order" style="color:#fff;border-color:#f00;background:radial-gradient(#f00,#a00) !important">fate grand order</div>
+    </td>
+  </tr>
+  <!-- Another cover row -->
+  <tr>
+    <td class="gl1e" style="width:250px"><div><a href="https://e-hentai.org/g/200/bbb/"><img src="/x/cover2.jpg"></a></div></td>
+    <td class="gl2e">
+      <div>
+        <div class="gl3e"><div class="cn">Doujinshi</div></div>
+        <a href="https://e-hentai.org/g/200/bbb/">
+          <div class="gl4e glname">
+            <div class="glink">Second Gallery</div>
+            <div><table></table></div>
+          </div>
+        </a>
+      </div>
+    </td>
+  </tr>
+</table>
+</body></html>
+"""
+
+
+def test_parse_list_page_extended_tags():
+    """Extended view: cover row tags + tag-only row tags aggregate correctly."""
+    info = parse_list_page(EXTENDED_TAGS_HTML)
+    assert len(info.galleries) == 2
+
+    g1 = info.galleries[0]
+    assert g1.gid == 100
+    assert g1.title == "Extended Gallery"
+    assert g1.category == "Manga"
+    # Tags from cover row nested table + tag-only row
+    assert len(g1.tags) == 4
+    tag_strs = [str(t) for t in g1.tags]
+    assert "language:chinese" in tag_strs
+    assert "female:ahegao" in tag_strs
+    assert "parody:original" in tag_strs
+    assert "parody:fate grand order" in tag_strs
+
+    # Featured tags carry style
+    ahegao = next(t for t in g1.tags if t.key == "ahegao")
+    assert ahegao.style is not None
+    assert ahegao.style.color == "#f1f1f1"
+    assert ahegao.style.background == "radial-gradient(#048751,#24A771)"
+
+    # Tag from tag-only row with featured style
+    fate = next(t for t in g1.tags if t.key == "fate grand order")
+    assert fate.style is not None
+    assert fate.style.color == "#fff"
+    assert fate.status == "skepticism"  # gtl
+
+    # Plain tag: no style
+    orig = next(t for t in g1.tags if t.key == "original")
+    assert orig.style is None
+
+    # Second gallery (no tags beyond the empty nested table)
+    g2 = info.galleries[1]
+    assert g2.gid == 200
+    assert g2.title == "Second Gallery"
+
+
+def test_parse_real_extended_fixture():
+    """Regression: real extended-view HTML fixture has styled tags."""
+    from pathlib import Path
+
+    fx = Path(__file__).parent / "fixtures"
+    fixture = fx / "list_page_extended.html"
+    if not fixture.exists():
+        return
+    info = parse_list_page(fixture.read_text(encoding="utf-8"))
+    assert len(info.galleries) >= 1, "should parse galleries from real fixture"
+    # At least one gallery should have tags
+    total_tags = sum(len(g.tags) for g in info.galleries)
+    assert total_tags > 0, "extended view should carry tags"
+    # At least some tags should have highlighted styles
+    styled = sum(1 for g in info.galleries for t in g.tags if t.style is not None)
+    assert styled > 0, f"expected some styled tags, got {styled} out of {total_tags}"
+
+
 DETAIL_TAGS_HTML = """
 <html><body>
 <div class="gtb"><div class="gpc">Showing 1 - 20 of 40 images</div></div>
@@ -369,3 +483,97 @@ def test_parse_real_fixture_tags():
     )
     assert detail.tags, "detail page should carry #taglist tags"
     assert detail.tags[0].status in ("confidence", "skepticism", "incorrect")
+
+
+# --------------------------------------------------------------------------
+# title parser — parse_title_authors
+# --------------------------------------------------------------------------
+
+from app.eh.title_parser import parse_title_authors
+
+
+def test_title_parser_simple_author():
+    clean, authors = parse_title_authors("[No1r] Yor Forger [AI Generated]")
+    assert clean == "Yor Forger"
+    assert authors == ["No1r"]
+
+
+def test_title_parser_author_with_suffix_tags():
+    clean, authors = parse_title_authors(
+        "[610cc] Daiji na Musume o Okuridashita. | 소중한 딸을 내보냈다. [Korean] [Digital]"
+    )
+    assert clean == "Daiji na Musume o Okuridashita. | 소중한 딸을 내보냈다."
+    assert authors == ["610cc"]
+
+
+def test_title_parser_chinese_author():
+    clean, authors = parse_title_authors("[種付け研究所] 風間いろは [AI Generated]")
+    assert clean == "風間いろは"
+    assert authors == ["種付け研究所"]
+
+
+def test_title_parser_circle_and_artist():
+    """Doujinshi convention: [Circle (Artist)] Title."""
+    clean, authors = parse_title_authors(
+        "[Digital Lover (Nakajima Yuka)] DLO-03", "Doujinshi"
+    )
+    assert clean == "DLO-03"
+    assert authors == ["Digital Lover", "Nakajima Yuka"]
+
+
+def test_title_parser_event_prefix():
+    """(Event) prefix before the author bracket."""
+    clean, authors = parse_title_authors(
+        "(C98) [Circle (Artist)] My Doujin Title"
+    )
+    assert clean == "My Doujin Title"
+    assert authors == ["Circle", "Artist"]
+
+
+def test_title_parser_no_brackets():
+    """Title with no brackets at all."""
+    clean, authors = parse_title_authors("Plain Title Without Brackets")
+    assert clean == "Plain Title Without Brackets"
+    assert authors == []
+
+
+def test_title_parser_only_suffix_brackets():
+    """Brackets after title only (language/digital tags), no author bracket."""
+    clean, authors = parse_title_authors("Some Title [Chinese] [Digital]")
+    assert clean == "Some Title"
+    assert authors == []
+
+
+def test_title_parser_parens_in_title():
+    """Parentheses inside the title text should be stripped from clean title."""
+    clean, authors = parse_title_authors(
+        "[PinchiVersus] Riley Andersen (Inside Out)"
+    )
+    assert clean == "Riley Andersen"
+    assert authors == ["PinchiVersus"]
+
+
+def test_title_parser_multiple_authors_comma():
+    clean, authors = parse_title_authors("[Author1, Author2] Some Title")
+    assert clean == "Some Title"
+    assert authors == ["Author1", "Author2"]
+
+
+def test_title_parser_multiple_authors_jp_sep():
+    clean, authors = parse_title_authors("[Author1、Author2] Some Title")
+    assert clean == "Some Title"
+    assert authors == ["Author1", "Author2"]
+
+
+def test_title_parser_whitespace_collapse():
+    """Multiple spaces in clean title are collapsed."""
+    clean, authors = parse_title_authors("[Author]   Too   Many   Spaces")
+    assert clean == "Too Many Spaces"
+    assert authors == ["Author"]
+
+
+def test_title_parser_empty_author_bracket():
+    """Empty brackets before title should not produce authors."""
+    clean, authors = parse_title_authors("[] Empty Bracket Title")
+    assert clean == "Empty Bracket Title"
+    assert authors == []

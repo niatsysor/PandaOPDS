@@ -30,16 +30,17 @@ def _pub(builder: Opds2Builder, **kw) -> dict:
         token="abc",
         title="My Gallery",
         modified=_iso(1700000000),
-        author="uploader",
+        authors=["uploader"],
         language="Chinese",
-        description="Pages: 42",
         page_count=42,
         published=_iso(1700000000),
         subjects=["female:netorare", "parody:zenless zone zero"],
         number_of_pages=42,
         extensions={
             "rating": 4.0,
+            "originalTitle": "[uploader] My Gallery",
             "titleJpn": "テスト",
+            "uploader": "uploader",
             "category": "Doujinshi",
             "sizeBytes": 12345,
             "tags": [
@@ -68,10 +69,10 @@ def test_navigation_document():
     doc = _load(
         builder.navigation_document(
             [
-                ("Home", "/opds/v2.0/gallery", "Latest uploads"),
-                ("Watched", "/opds/v2.0/gallery?query=watched", "Watched galleries"),
-                ("Favorites", "/opds/v2.0/gallery?query=favorites", "Favorite galleries"),
-                ("Popular", "/opds/v2.0/gallery?query=popular", "Popular this week"),
+                {"title": "Home", "href": "/opds/v2.0/gallery", "summary": "Latest uploads"},
+                {"title": "Watched", "href": "/opds/v2.0/gallery?query=watched", "summary": "Watched galleries"},
+                {"title": "Favorites", "href": "/opds/v2.0/gallery?query=favorites", "summary": "Favorite galleries"},
+                {"title": "Popular", "href": "/opds/v2.0/gallery?query=popular", "summary": "Popular this week"},
             ]
         )
     )
@@ -116,7 +117,9 @@ def test_publication_metadata_and_links():
     # all EH-specific data lives in the single `extensions` bucket
     ext = md["extensions"]
     assert ext["rating"] == 4.0
+    assert ext["originalTitle"] == "[uploader] My Gallery"
     assert ext["titleJpn"] == "テスト"
+    assert ext["uploader"] == "uploader"
     assert ext["category"] == "Doujinshi"
     assert ext["sizeBytes"] == 12345
     assert ext["tags"][0]["namespace"] == "female"
@@ -149,6 +152,7 @@ def test_publication_standard_fields_omitted_when_unset():
     assert "extensions" not in md
     assert "authors" not in md
     assert "language" not in md
+    assert "description" not in md
 
 
 def test_publication_page_base_zero():
@@ -166,7 +170,9 @@ def test_publication_no_page_count_omits_stream():
     pub = _pub(builder, page_count=None)
     rels = {l["rel"] for l in pub["links"]}
     assert REL_STREAM not in rels
-    assert "properties" not in pub["links"][1]
+    # Without page_count, acquisition link won't have properties either.
+    acq = [l for l in pub["links"] if l["rel"] == REL_ACQUISITION][0]
+    assert "properties" not in acq
 
 
 def test_publication_chinese_title_ascii_safe():
@@ -272,7 +278,7 @@ def test_facet_links_with_public_base_url():
 
 def test_absolute_urls_when_public_base_set():
     builder = Opds2Builder(_settings(public_base_url="https://opds.example.com"))
-    doc = _load(builder.navigation_document([("Latest", "/opds/v2.0/gallery", "")]))
+    doc = _load(builder.navigation_document([{"title": "Latest", "href": "/opds/v2.0/gallery", "summary": ""}]))
     assert doc["links"][0]["href"] == "https://opds.example.com/opds/v2.0"
     pub = _pub(builder)
     stream = [l for l in pub["links"] if l["rel"] == REL_STREAM][0]

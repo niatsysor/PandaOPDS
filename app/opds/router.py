@@ -10,6 +10,7 @@ from fastapi.responses import Response
 
 from ..eh.models import GalleryListItem, GalleryMetadata
 from ..eh.service import EHService
+from ..eh.title_parser import parse_title_authors
 from ..home_config import (
     build_href,
     is_auth_required,
@@ -61,22 +62,20 @@ def _gallery_entry(
     item: GalleryListItem,
     meta: GalleryMetadata | None,
 ) -> FeedEntry:
-    title = meta.title if meta and meta.title else item.title
+    raw_title = meta.title if meta and meta.title else item.title
     category = meta.category if meta and meta.category else item.category
     updated = _iso(meta.posted) if meta and meta.posted else _iso()
-    author = meta.uploader if meta else ""
     page_count = meta.filecount if meta and meta.filecount else item.page_count
 
-    parts: list[str] = []
+    # Parse authors from title; use clean title as display title.
     if meta:
-        parts.append(f"Language: {meta.language}")
-        parts.append(f"Pages: {meta.filecount}")
-        parts.append(f"Uploader: {meta.uploader or 'unknown'}")
-        parts.append(f"Rating: {meta.rating:.2f}")
-        parts.append(f"Size: {meta.size_human}")
-    elif item.page_count:
-        parts.append(f"Pages: {item.page_count}")
-    summary = " | ".join(parts)
+        clean_title, authors = parse_title_authors(raw_title, meta.category)
+    else:
+        clean_title = raw_title
+        authors = []
+
+    # v1.2 <author> element supports a single name; join multiple authors.
+    author = ", ".join(authors) if authors else ""
 
     links = [
         FeedLink(
@@ -104,12 +103,12 @@ def _gallery_entry(
 
     return FeedEntry(
         id=f"urn:ehentai:gallery:{item.gid}:{item.token}",
-        title=title,
+        title=clean_title,
         updated=updated,
         author=author,
         category_term=category,
         category_label=category,
-        summary=summary,
+        summary="",
         links=links,
     )
 
@@ -282,23 +281,17 @@ async def chapter_feed(request: Request, gid: int, token: str):
     if meta is None:
         raise HTTPException(status_code=404, detail="Gallery not found")
 
-    summary_parts = [
-        f"Language: {meta.language}",
-        f"Pages: {meta.filecount}",
-        f"Uploader: {meta.uploader or 'unknown'}",
-        f"Rating: {meta.rating:.2f}",
-        f"Category: {meta.category}",
-        f"Size: {meta.size_human}",
-    ]
+    clean_title, authors = parse_title_authors(meta.title, meta.category)
+    author = ", ".join(authors) if authors else ""
     content = builder.chapter_feed(
         gid=gid,
         token=token,
-        title=meta.title,
+        title=clean_title,
         updated=_iso(meta.posted),
-        author=meta.uploader,
+        author=author,
         category_term=meta.category,
         category_label=meta.category,
-        summary=" | ".join(summary_parts),
+        summary="",
         filecount=meta.filecount,
         thumb_href=f"/image/{gid}/{token}/thumb",
     )
