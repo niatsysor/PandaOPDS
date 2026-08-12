@@ -187,16 +187,14 @@ def _publication(
 async def root_feed(request: Request):
     """Root OPDS 2.0 document.
 
-    Layout is driven by a TOML config (see ``home_config``).  ``[[group]]``
-    sections are rendered as ``groups[]`` — each may carry ``publications[]``
-    (inline preview), ``navigation[]`` (sub-links, Komga-style), or both.
-    ``[[navigation]]`` sections become root ``navigation[]`` links.
+    Layout is driven by a TOML config — a single flat ``[[section]]`` array.
+    Each section has a ``kind``:
+
+    * ``kind="publication"`` → ``groups[]`` with inline ``publications[]``
+    * ``kind="navigation"`` (no root) → ``groups[]`` with ``navigation[]``
+    * ``kind="navigation"`` + ``root=true`` → root ``navigation[]``
 
     Watched / Favorites are auth-gated: omitted when no IPB cookie is set.
-
-    All group list pages are fetched concurrently, then **all** gdata metadata
-    is merged into a single batched ``get_metadatas()`` call so the API never
-    exceeds the 4–5 request safe window.
     """
     service = _service(request)
     builder = _builder(request)
@@ -210,34 +208,28 @@ async def root_feed(request: Request):
             return False
         return True
 
-    visible_groups = [g for g in home.groups if _visible(g)]
-    visible_nav = [n for n in home.navigation if _visible(n)]
+    sections = [s for s in home.sections if _visible(s)]
 
-    # Split: groups with publications need upstream list fetching; pure
-    # navigation shells (publications == 0) are rendered directly.
-    fetch_groups = [g for g in visible_groups if g.publications > 0]
-
-    # Phase 1 — concurrently fetch list pages for publication-bearing groups.
+    # Phase 1 — concurrently fetch list pages for publication sections.
+    pub_sections = [s for s in sections if s.kind == "publication" and s.count > 0]
     results = await asyncio.gather(
-        *[fetch_section(service, g) for g in fetch_groups],
+        *[fetch_section(service, s) for s in pub_sections],
         return_exceptions=True,
     )
-    fetched: dict[int, GalleryPageInfo] = {}  # id(section) -> info
-    for section, result in zip(fetch_groups, results):
+    fetched: dict[int, GalleryPageInfo] = {}
+    for section, result in zip(pub_sections, results):
         if isinstance(result, Exception):
-            logger.warning("home group %r list error: %s", section.title, result)
+            logger.warning("section %r list error: %s", section.title, result)
         else:
             fetched[id(section)] = result
 
-    # Phase 2 — collect all unique gids from successfully fetched groups,
-    # then fetch metadata in ONE merged batch.
+    # Phase 2 — batch gdata metadata.
     meta_by_gid: dict[int, GalleryMetadata] = {}
     if fetched:
         all_gids: dict[tuple[int, str], None] = {}
-        for section, info in zip(fetch_groups, results):
+        for section in pub_sections:
             if id(section) in fetched:
-                info = fetched[id(section)]
-                for item in info.galleries[: section.publications]:
+                for item in fetched[id(section)].galleries[: section.count]:
                     all_gids.setdefault((item.gid, item.token))
         if all_gids:
             try:
@@ -247,58 +239,65 @@ async def root_feed(request: Request):
                 metas = []
             meta_by_gid = {m.gid: m for m in metas}
 
-    # Phase 3 — build group dicts in TOML order.
+    # Phase 3 — build groups[] and base_href() in TOML order.
     groups: list[dict] = []
-    for section in visible_groups:
-        g: dict = {
-            "metadata": {
-                "title": section.title,
-                "identifier": f"urn:ehentai:group:{section.type}:{section.query}",
-                "modified": _iso(),
-            },
-            "links": [{
-                "rel": "self",
-                "href": builder.href(build_href(type=section.type, query=section.query)),
-                "type": MIME_ACQ,
-                "title": section.title,
-            }],
-        }
+    root_nav: list[dict] = []
 
-        # Inline publications (when this group was fetched).
-        if section.publications > 0 and id(section) in fetched:
-            info = fetched[id(section)]
-            items = info.galleries[: section.publications]
-            g["publications"] = [
-                _publication(builder, item, meta_by_gid.get(item.gid))
-                for item in items
-            ]
+    for s in sections:
+        href = builder.href(build_href(type=s.type, query=s.query))
 
-        # Group-level navigation (Komga-style: flat {title, href, type} list).
-        if section.navigation:
-            g["navigation"] = [
-                {
-                    "title": nav.title,
-                    "href": builder.href(build_href(type=nav.type, query=nav.query)),
+        if s.kind == "publication":
+            g: dict = {
+                "metadata": {
+                    "title": s.title,
+                    "identifier": f"urn:ehentai:group:{s.type}:{s.query}",
+                    "modified": _iso(),
+                },
+                "links": [{
+                    "rel": "self",
+                    "href": href,
                     "type": MIME_ACQ,
-                }
-                for nav in section.navigation
-                if _visible(nav)
-            ]
+                    "title": s.title,
+                }],
+            }
+            if id(s) in fetched:
+                info = fetched[id(s)]
+                items = info.galleries[: s.count]
+                g["publications"] = [
+                    _publication(builder, item, meta_by_gid.get(item.gid))
+                    for item in items
+                ]
+            groups.append(g)
 
-        groups.append(g)
-
-    # Root navigation items.
-    nav_items: list[dict] = [
-        {
-            "title": nav.title,
-            "href": build_href(type=nav.type, query=nav.query),
-            "summary": nav.title,
-        }
-        for nav in visible_nav
-    ]
+        elif s.kind == "navigation":
+            if s.root:
+                root_nav.append({
+                    "title": s.title,
+                    "href": build_href(type=s.type, query=s.query),
+                    "summary": s.title,
+                })
+            else:
+                groups.append({
+                    "metadata": {
+                        "title": s.title,
+                        "identifier": f"urn:ehentai:group:{s.type}:{s.query}",
+                        "modified": _iso(),
+                    },
+                    "links": [{
+                        "rel": "self",
+                        "href": href,
+                        "type": MIME_ACQ,
+                        "title": s.title,
+                    }],
+                    "navigation": [{
+                        "title": s.title,
+                        "href": href,
+                        "type": MIME_ACQ,
+                    }],
+                })
 
     content = builder.navigation_document(
-        navigation=nav_items or None,
+        navigation=root_nav or None,
         groups=groups or None,
     )
     return Response(

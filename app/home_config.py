@@ -1,41 +1,44 @@
 """Home page configuration loaded from a TOML file.
 
-Declarative layout: users define ``[[group]]`` and ``[[navigation]]`` sections
-with ``(type, query)`` pairs.  The server dispatches these to E-Hentai service
-calls and builds OPDS 2.0 ``groups[]`` / ``navigation[]`` accordingly.
+Declarative layout: a single flat ``[[section]]`` array.  ``kind`` + ``root``
+determine where each section lands in the OPDS 2.0 document.
 
 ``type`` ∈ {"preset", "search"}
   - preset: query is a built-in key (latest, popular, watched, favorites, toplist:*)
   - search: query is an arbitrary E-Hentai search expression
 
-Order in the TOML equals order in the OPDS output.  The client derives layout
-from position and publication count.
+TOML example::
 
-Groups can carry publications (inline preview), navigation (sub-links), or
-both — similar to Komga's group model:
-
-    [[group]]
-    title = "昨日最佳"
+    [[section]]
+    kind = "publication"
+    title = "Trending"
     type = "preset"
     query = "toplist:yesterday"
-    publications = 5
+    count = 20
 
-      [[group.navigation]]
-      title = "月度精选"
-      type = "preset"
-      query = "toplist:month"
-
-    [[navigation]]
+    [[section]]
+    kind = "navigation"
     title = "历史总榜"
     type = "preset"
     query = "toplist:alltime"
+
+    [[section]]
+    kind = "navigation"
+    root = true
+    title = "关注"
+    type = "preset"
+    query = "watched"
 """
 
 from __future__ import annotations
 
 import logging
-import tomllib
 from dataclasses import dataclass, field
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as tomllib  # backport for 3.9/3.10
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -53,22 +56,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Section:
-    """A single section.
-
-    Groups (publications > 0) may carry a ``navigation`` list of sub-links
-    rendered as the group's ``navigation[]`` array (OPDS 2.0, Komga-style).
-    """
+    """A single section in the flat TOML array."""
+    kind: str          # "publication" | "navigation"
     title: str
     type: str          # "preset" | "search"
     query: str
-    publications: int = 0   # 0 = navigation-only (root nav or group nav shell)
-    navigation: list[Section] = field(default_factory=list)
+    count: int = 0     # publication count (kind="publication" only)
+    root: bool = False # True → root navigation[]; False/absent → groups[]
 
 
 @dataclass
 class HomeConfig:
-    groups: list[Section] = field(default_factory=list)
-    navigation: list[Section] = field(default_factory=list)
+    sections: list[Section] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -145,71 +144,41 @@ def is_auth_required(type: str, query: str) -> bool:
 # TOML parsing
 # ---------------------------------------------------------------------------
 
-def _parse_section(raw: dict) -> Section:
-    """Parse a single TOML section dict into a Section."""
-    nav: list[Section] = []
-    for nav_item in raw.get("navigation", []):
-        nav.append(_parse_section(nav_item))
-    return Section(
-        title=raw["title"],
-        type=raw["type"],
-        query=raw["query"],
-        publications=raw.get("publications", 0),
-        navigation=nav,
-    )
-
-
 def parse_home_toml(path: Path) -> HomeConfig:
     """Parse a home.toml file into a HomeConfig."""
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
-    groups: list[Section] = []
-    for item in raw.get("group", []):
-        sections = _parse_section(item)
-        # Allow groups with no publications (pure navigation shell)
-        groups.append(sections)
+    sections: list[Section] = []
+    for item in raw.get("section", []):
+        kind = item.get("kind", "publication")
+        sections.append(Section(
+            kind=kind,
+            title=item.get("title", ""),
+            type=item.get("type", "preset"),
+            query=item.get("query", "latest"),
+            count=item.get("count", 0),
+            root=item.get("root", False),
+        ))
 
-    navigation: list[Section] = []
-    for item in raw.get("navigation", []):
-        navigation.append(_parse_section(item))
-
-    return HomeConfig(groups=groups, navigation=navigation)
+    return HomeConfig(sections=sections)
 
 
 # ---------------------------------------------------------------------------
 # Default built-in config
 # ---------------------------------------------------------------------------
 
-DEFAULT_CONFIG = HomeConfig(
-    groups=[
-        Section(
-            title="排行榜",
-            type="preset",
-            query="toplist:yesterday",
-            publications=5,
-            navigation=[
-                Section(title="月度精选", type="preset", query="toplist:month"),
-                Section(title="年度佳作", type="preset", query="toplist:year"),
-            ],
-        ),
-        Section(
-            title="浏览",
-            type="preset",
-            query="popular",
-            publications=10,
-            navigation=[
-                Section(title="最新上传", type="preset", query="latest"),
-            ],
-        ),
-        Section(title="中文同人", type="search", query="language:chinese", publications=15),
-    ],
-    navigation=[
-        Section(title="历史总榜", type="preset", query="toplist:alltime"),
-        Section(title="我的收藏", type="preset", query="favorites"),
-        Section(title="日文原版", type="search", query="language:japanese"),
-    ],
-)
+DEFAULT_SECTIONS: list[Section] = [
+    Section(kind="publication", title="昨日最佳",   type="preset", query="toplist:yesterday", count=5),
+    Section(kind="navigation",  title="月度精选",   type="preset", query="toplist:month"),
+    Section(kind="navigation",  title="年度佳作",   type="preset", query="toplist:year"),
+    Section(kind="publication", title="本周热门",   type="preset", query="popular",          count=10),
+    Section(kind="navigation",  title="最新上传",   type="preset", query="latest"),
+    Section(kind="publication", title="中文同人",   type="search", query="language:chinese", count=15),
+    Section(kind="navigation",  title="历史总榜",   type="preset", query="toplist:alltime",  root=True),
+    Section(kind="navigation",  title="我的收藏",   type="preset", query="favorites",        root=True),
+    Section(kind="navigation",  title="日文原版",   type="search", query="language:japanese",root=True),
+]
 
 
 def load_home_config(home_config_path: Path | None) -> HomeConfig:
@@ -223,4 +192,4 @@ def load_home_config(home_config_path: Path | None) -> HomeConfig:
                 "Failed to parse %s, falling back to defaults: %s",
                 home_config_path, exc,
             )
-    return DEFAULT_CONFIG
+    return HomeConfig(sections=list(DEFAULT_SECTIONS))

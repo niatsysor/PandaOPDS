@@ -117,9 +117,8 @@ def _gallery_entry(
 async def root_feed(request: Request):
     """Root OPDS 1.2 navigation feed.
 
-    Flattens the home TOML config (groups + navigation) into a single
-    navigation list.  v1.2 has no ``groups[]`` — everything is a plain
-    navigation link.
+    Flattens the home TOML config (all sections) into a single navigation
+    list.  v1.2 has no ``groups[]`` — everything is a plain navigation link.
     """
     builder = _builder(request)
     settings = request.app.state.settings
@@ -132,18 +131,13 @@ async def root_feed(request: Request):
         return True
 
     nav: list[tuple[str, str, str]] = []
-    for g in home.groups:
-        if _visible(g.type, g.query):
-            href = build_href(type=g.type, query=g.query, base="/opds/v1.2")
-            nav.append((g.title, href, g.title))
-        for sub in g.navigation:
-            if _visible(sub.type, sub.query):
-                href = build_href(type=sub.type, query=sub.query, base="/opds/v1.2")
-                nav.append((sub.title, href, sub.title))
-    for n in home.navigation:
-        if _visible(n.type, n.query):
-            href = build_href(type=n.type, query=n.query, base="/opds/v1.2")
-            nav.append((n.title, href, n.title))
+    for s in home.sections:
+        if _visible(s.type, s.query):
+            href = build_href(type=s.type, query=s.query, base="/opds/v1.2")
+            nav.append((s.title, href, s.title))
+
+    # Keep OpenSearch as the last nav entry (protocol-level, not in TOML).
+    nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))
 
     # Keep OpenSearch as the last nav entry (protocol-level, not in TOML).
     nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))

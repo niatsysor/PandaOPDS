@@ -1,70 +1,73 @@
 # PandaOPDS 首页布局
 # ====================
 #
-# [[group]]        → OPDS 2.0 groups[]
-#   ├─ publications   → 内嵌出版物预览
-#   └─ [[group.navigation]] → 组内子导航（Komga 风格）
-# [[navigation]]   → OPDS 2.0 根级 navigation[]
+# [[section]]                    # 单一数组，书写顺序 = OPDS 输出顺序
 #
-# type: "preset"  → 内置浏览维度
+# kind = "publication"           → groups[] 含 publications[]（内嵌预览）
+# kind = "navigation"            → groups[] 含 navigation[]（纯导航壳）
+# kind = "navigation"  root=true → 根 navigation[]
+#
+# type: "preset" → 内置浏览维度
 #   query: latest / popular / watched / favorites
 #         toplist:yesterday / toplist:month / toplist:year / toplist:alltime
-# type: "search"  → E-Hentai 自由搜索表达式 (query 任意)
-#
-# 书写顺序 = OPDS 输出顺序。客户端可据此推断展示布局。
+# type: "search" → E-Hentai 自由搜索表达式
 
-# ---- 分区 1: 排行榜（带预览 + 子导航） ----
-
-[[group]]
+[[section]]
+kind = "publication"
 title = "昨日最佳"
 type = "preset"
 query = "toplist:yesterday"
-publications = 5
+count = 5
 
-  [[group.navigation]]
-  title = "月度精选"
-  type = "preset"
-  query = "toplist:month"
+[[section]]
+kind = "navigation"
+title = "月度精选"
+type = "preset"
+query = "toplist:month"
 
-  [[group.navigation]]
-  title = "年度佳作"
-  type = "preset"
-  query = "toplist:year"
+[[section]]
+kind = "navigation"
+title = "年度佳作"
+type = "preset"
+query = "toplist:year"
 
-# ---- 分区 2: 浏览（带预览 + 子导航） ----
-
-[[group]]
+[[section]]
+kind = "publication"
 title = "本周热门"
 type = "preset"
 query = "popular"
-publications = 10
+count = 10
 
-  [[group.navigation]]
-  title = "最新上传"
-  type = "preset"
-  query = "latest"
+[[section]]
+kind = "navigation"
+title = "最新上传"
+type = "preset"
+query = "latest"
 
-# ---- 分区 3: 自定义搜索 ----
-
-[[group]]
+[[section]]
+kind = "publication"
 title = "中文同人"
 type = "search"
 query = "language:chinese"
-publications = 15
+count = 15
 
-# ---- 根级导航 ----
-
-[[navigation]]
+[[section]]
+kind = "navigation"
+root = true
 title = "历史总榜"
 type = "preset"
 query = "toplist:alltime"
 
-[[navigation]]
+[[section]]
+kind = "navigation"
+root = true
 title = "我的收藏"
 type = "preset"
 query = "favorites"
 
-[[navigation]]
+[[section]]
+kind = "navigation"
+root = true
 title = "日文原版"
 type = "search"
 query = "language:japanese"
