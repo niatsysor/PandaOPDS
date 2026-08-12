@@ -136,6 +136,10 @@ async def root_feed(request: Request):
         if _visible(g.type, g.query):
             href = build_href(type=g.type, query=g.query, base="/opds/v1.2")
             nav.append((g.title, href, g.title))
+        for sub in g.navigation:
+            if _visible(sub.type, sub.query):
+                href = build_href(type=sub.type, query=sub.query, base="/opds/v1.2")
+                nav.append((sub.title, href, sub.title))
     for n in home.navigation:
         if _visible(n.type, n.query):
             href = build_href(type=n.type, query=n.query, base="/opds/v1.2")

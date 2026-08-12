@@ -187,9 +187,11 @@ def _publication(
 async def root_feed(request: Request):
     """Root OPDS 2.0 document.
 
-    Layout is driven by a TOML config (see ``home_config``).  Sections of
-    type ``[[group]]`` are rendered as ``groups[]`` with inline publication
-    previews; ``[[navigation]]`` sections become root ``navigation[]`` links.
+    Layout is driven by a TOML config (see ``home_config``).  ``[[group]]``
+    sections are rendered as ``groups[]`` — each may carry ``publications[]``
+    (inline preview), ``navigation[]`` (sub-links, Komga-style), or both.
+    ``[[navigation]]`` sections become root ``navigation[]`` links.
+
     Watched / Favorites are auth-gated: omitted when no IPB cookie is set.
 
     All group list pages are fetched concurrently, then **all** gdata metadata
@@ -211,56 +213,79 @@ async def root_feed(request: Request):
     visible_groups = [g for g in home.groups if _visible(g)]
     visible_nav = [n for n in home.navigation if _visible(n)]
 
-    # Phase 1 — concurrently fetch all group list pages.
+    # Split: groups with publications need upstream list fetching; pure
+    # navigation shells (publications == 0) are rendered directly.
+    fetch_groups = [g for g in visible_groups if g.publications > 0]
+
+    # Phase 1 — concurrently fetch list pages for publication-bearing groups.
     results = await asyncio.gather(
-        *[fetch_section(service, g) for g in visible_groups],
+        *[fetch_section(service, g) for g in fetch_groups],
         return_exceptions=True,
     )
-    paired: list[tuple[Section, GalleryPageInfo]] = []
-    for section, result in zip(visible_groups, results):
+    fetched: dict[int, GalleryPageInfo] = {}  # id(section) -> info
+    for section, result in zip(fetch_groups, results):
         if isinstance(result, Exception):
             logger.warning("home group %r list error: %s", section.title, result)
         else:
-            paired.append((section, result))
+            fetched[id(section)] = result
 
-    # Phase 2 — collect all unique gids, fetch metadata in ONE merged batch.
+    # Phase 2 — collect all unique gids from successfully fetched groups,
+    # then fetch metadata in ONE merged batch.
+    meta_by_gid: dict[int, GalleryMetadata] = {}
+    if fetched:
+        all_gids: dict[tuple[int, str], None] = {}
+        for section, info in zip(fetch_groups, results):
+            if id(section) in fetched:
+                info = fetched[id(section)]
+                for item in info.galleries[: section.publications]:
+                    all_gids.setdefault((item.gid, item.token))
+        if all_gids:
+            try:
+                metas = await service.get_metadatas(list(all_gids))
+            except Exception as exc:
+                logger.warning("home metadata batch error: %s", exc)
+                metas = []
+            meta_by_gid = {m.gid: m for m in metas}
+
+    # Phase 3 — build group dicts in TOML order.
     groups: list[dict] = []
-    if paired:
-        all_gids: dict[tuple[int, str], int] = {}
-        group_data: list[tuple[Section, list[GalleryListItem]]] = []
-        for idx, (section, info) in enumerate(paired):
+    for section in visible_groups:
+        g: dict = {
+            "metadata": {
+                "title": section.title,
+                "identifier": f"urn:ehentai:group:{section.type}:{section.query}",
+                "modified": _iso(),
+            },
+            "links": [{
+                "rel": "self",
+                "href": builder.href(build_href(type=section.type, query=section.query)),
+                "type": MIME_ACQ,
+                "title": section.title,
+            }],
+        }
+
+        # Inline publications (when this group was fetched).
+        if section.publications > 0 and id(section) in fetched:
+            info = fetched[id(section)]
             items = info.galleries[: section.publications]
-            group_data.append((section, items))
-            for item in items:
-                all_gids.setdefault((item.gid, item.token), idx)
-
-        try:
-            metas = await service.get_metadatas(list(all_gids.keys()))
-        except Exception as exc:
-            logger.warning("home metadata batch error: %s", exc)
-            metas = []
-        meta_by_gid = {m.gid: m for m in metas}
-
-        # Phase 3 — build publication dicts and group dicts.
-        for section, items in group_data:
-            publications = [
+            g["publications"] = [
                 _publication(builder, item, meta_by_gid.get(item.gid))
                 for item in items
             ]
-            groups.append({
-                "metadata": {
-                    "title": section.title,
-                    "identifier": f"urn:ehentai:group:{section.type}:{section.query}",
-                    "modified": _iso(),
-                },
-                "links": [{
-                    "rel": "self",
-                    "href": builder.href(build_href(type=section.type, query=section.query)),
+
+        # Group-level navigation (Komga-style: flat {title, href, type} list).
+        if section.navigation:
+            g["navigation"] = [
+                {
+                    "title": nav.title,
+                    "href": builder.href(build_href(type=nav.type, query=nav.query)),
                     "type": MIME_ACQ,
-                    "title": section.title,
-                }],
-                "publications": publications,
-            })
+                }
+                for nav in section.navigation
+                if _visible(nav)
+            ]
+
+        groups.append(g)
 
     # Root navigation items.
     nav_items: list[dict] = [

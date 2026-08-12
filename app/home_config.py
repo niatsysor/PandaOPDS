@@ -8,10 +8,11 @@ calls and builds OPDS 2.0 ``groups[]`` / ``navigation[]`` accordingly.
   - preset: query is a built-in key (latest, popular, watched, favorites, toplist:*)
   - search: query is an arbitrary E-Hentai search expression
 
-Everything is flat — no nesting.  Order in the TOML equals order in the OPDS
-output.  The client derives layout from position and publication count.
+Order in the TOML equals order in the OPDS output.  The client derives layout
+from position and publication count.
 
-TOML example::
+Groups can carry publications (inline preview), navigation (sub-links), or
+both — similar to Komga's group model:
 
     [[group]]
     title = "昨日最佳"
@@ -19,11 +20,10 @@ TOML example::
     query = "toplist:yesterday"
     publications = 5
 
-    [[group]]
-    title = "月度精选"
-    type = "preset"
-    query = "toplist:month"
-    publications = 10
+      [[group.navigation]]
+      title = "月度精选"
+      type = "preset"
+      query = "toplist:month"
 
     [[navigation]]
     title = "历史总榜"
@@ -53,11 +53,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Section:
-    """A single section — group (publications > 0) or nav link (publications == 0)."""
+    """A single section.
+
+    Groups (publications > 0) may carry a ``navigation`` list of sub-links
+    rendered as the group's ``navigation[]`` array (OPDS 2.0, Komga-style).
+    """
     title: str
     type: str          # "preset" | "search"
     query: str
-    publications: int = 0   # 0 = navigation-only
+    publications: int = 0   # 0 = navigation-only (root nav or group nav shell)
+    navigation: list[Section] = field(default_factory=list)
 
 
 @dataclass
@@ -140,6 +145,20 @@ def is_auth_required(type: str, query: str) -> bool:
 # TOML parsing
 # ---------------------------------------------------------------------------
 
+def _parse_section(raw: dict) -> Section:
+    """Parse a single TOML section dict into a Section."""
+    nav: list[Section] = []
+    for nav_item in raw.get("navigation", []):
+        nav.append(_parse_section(nav_item))
+    return Section(
+        title=raw["title"],
+        type=raw["type"],
+        query=raw["query"],
+        publications=raw.get("publications", 0),
+        navigation=nav,
+    )
+
+
 def parse_home_toml(path: Path) -> HomeConfig:
     """Parse a home.toml file into a HomeConfig."""
     with open(path, "rb") as f:
@@ -147,25 +166,13 @@ def parse_home_toml(path: Path) -> HomeConfig:
 
     groups: list[Section] = []
     for item in raw.get("group", []):
-        pubs = item.get("publications", 0)
-        if not pubs:
-            raise ValueError(
-                f"Group {item.get('title', '?')!r} is missing required 'publications' field"
-            )
-        groups.append(Section(
-            title=item["title"],
-            type=item["type"],
-            query=item["query"],
-            publications=pubs,
-        ))
+        sections = _parse_section(item)
+        # Allow groups with no publications (pure navigation shell)
+        groups.append(sections)
 
     navigation: list[Section] = []
     for item in raw.get("navigation", []):
-        navigation.append(Section(
-            title=item["title"],
-            type=item["type"],
-            query=item["query"],
-        ))
+        navigation.append(_parse_section(item))
 
     return HomeConfig(groups=groups, navigation=navigation)
 
@@ -176,12 +183,26 @@ def parse_home_toml(path: Path) -> HomeConfig:
 
 DEFAULT_CONFIG = HomeConfig(
     groups=[
-        Section(title="昨日最佳",   type="preset",  query="toplist:yesterday",  publications=5),
-        Section(title="月度精选",   type="preset",  query="toplist:month",      publications=10),
-        Section(title="年度佳作",   type="preset",  query="toplist:year",       publications=10),
-        Section(title="本周热门",   type="preset",  query="popular",            publications=10),
-        Section(title="最新上传",   type="preset",  query="latest",             publications=20),
-        Section(title="中文同人",   type="search",  query="language:chinese",   publications=15),
+        Section(
+            title="排行榜",
+            type="preset",
+            query="toplist:yesterday",
+            publications=5,
+            navigation=[
+                Section(title="月度精选", type="preset", query="toplist:month"),
+                Section(title="年度佳作", type="preset", query="toplist:year"),
+            ],
+        ),
+        Section(
+            title="浏览",
+            type="preset",
+            query="popular",
+            publications=10,
+            navigation=[
+                Section(title="最新上传", type="preset", query="latest"),
+            ],
+        ),
+        Section(title="中文同人", type="search", query="language:chinese", publications=15),
     ],
     navigation=[
         Section(title="历史总榜", type="preset", query="toplist:alltime"),

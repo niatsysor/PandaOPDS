@@ -153,7 +153,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 | 路由 | 说明 |
 |------|------|
-| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`groups[]` = 各区块内联 publication 预览（OPDS 2.0 §2.5，由 `config/home.toml` 的 `[[group]]` 控制，书写顺序 = 输出顺序）；`navigation[]` = `[[navigation]]` 纯导航链接（无 extensions）；Watched/Favorites 无 IPB cookie 时自动过滤 |
+| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`groups[]` = 各区块（由 `config/home.toml` 的 `[[group]]` 控制，可含 `publications[]` 预览、`navigation[]` 子导航或两者皆有）；`navigation[]` = `[[navigation]]` 纯导航链接；Watched/Favorites 无 IPB cookie 时自动过滤 |
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
@@ -165,7 +165,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 **约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，也不在根 feed 混入采集条目。
 
-- **`groups[]`（OPDS 2.0 标准，§2.5）**：根文档 `groups[]` 中每个 group 包含 `metadata.title`、`links`（`rel="self"` 指向完整列表）、`publications[]`（内联预览条目，数量由 TOML `publications` 字段控制）。**任何兼容 OPDS 2.0 的客户端均可原生渲染为分栏网格**——无需私货标记。
+- **`groups[]`（OPDS 2.0 标准，§2.5）**：每个 group 包含 `metadata.title`、`links`（`rel="self"` 指向完整列表）。可含 `publications[]`（内联预览，数量由 TOML `publications` 字段控制）和/或 `navigation[]`（组内子导航，Komga 风格）。**任何兼容 OPDS 2.0 的客户端均可原生渲染**——无需私货标记。
 - **`navigation[]`**：`navigation[]` 来自 `[[navigation]]` 条目，以及无 IPB cookie 时省略的 Watched/Favorites。不再输出 `extensions.layout` 私货。
 - **配置**：`config/home.toml`（`[[group]]` / `[[navigation]]`），环境变量 `HOME_CONFIG` 可指定文件路径。不设文件时使用内置默认布局。
 
