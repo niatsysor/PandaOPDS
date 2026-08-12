@@ -1,7 +1,8 @@
 """Home page configuration loaded from a TOML file.
 
-Declarative layout: a single flat ``[[section]]`` array.  ``kind`` + ``root``
-determine where each section lands in the OPDS 2.0 document.
+Declarative layout: a single flat ``[[section]]`` array.  ``kind`` determines
+the OPDS role; ``group`` merges consecutive navigation sections into one
+group slot (Komga Libraries-style).
 
 ``type`` ∈ {"preset", "search"}
   - preset: query is a built-in key (latest, popular, watched, favorites, toplist:*)
@@ -18,30 +19,37 @@ TOML example::
 
     [[section]]
     kind = "navigation"
-    title = "历史总榜"
-    type = "preset"
-    query = "toplist:alltime"
-
-    [[section]]
-    kind = "navigation"
-    root = true
     title = "关注"
     type = "preset"
     query = "watched"
+
+    [[section]]
+    kind = "navigation"
+    group = "rankings"
+    title = "排行榜"
+    type = "preset"
+    query = "toplist:yesterday"
+
+    [[section]]
+    kind = "navigation"
+    group = "rankings"
+    title = "月度精选"
+    type = "preset"
+    query = "toplist:month"
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:
     import tomli as tomllib  # backport for 3.9/3.10
-from pathlib import Path
-from typing import TYPE_CHECKING
-from urllib.parse import quote
 
 if TYPE_CHECKING:
     from .eh.models import GalleryPageInfo
@@ -62,7 +70,7 @@ class Section:
     type: str          # "preset" | "search"
     query: str
     count: int = 0     # publication count (kind="publication" only)
-    root: bool = False # True → root navigation[]; False/absent → groups[]
+    group: str = "root"  # "root" → root navigation[]; else → group key for merging
 
 
 @dataclass
@@ -151,14 +159,13 @@ def parse_home_toml(path: Path) -> HomeConfig:
 
     sections: list[Section] = []
     for item in raw.get("section", []):
-        kind = item.get("kind", "publication")
         sections.append(Section(
-            kind=kind,
+            kind=item.get("kind", "publication"),
             title=item.get("title", ""),
             type=item.get("type", "preset"),
             query=item.get("query", "latest"),
             count=item.get("count", 0),
-            root=item.get("root", False),
+            group=item.get("group", "root"),
         ))
 
     return HomeConfig(sections=sections)
@@ -169,15 +176,15 @@ def parse_home_toml(path: Path) -> HomeConfig:
 # ---------------------------------------------------------------------------
 
 DEFAULT_SECTIONS: list[Section] = [
-    Section(kind="publication", title="昨日最佳",   type="preset", query="toplist:yesterday", count=5),
-    Section(kind="navigation",  title="月度精选",   type="preset", query="toplist:month"),
-    Section(kind="navigation",  title="年度佳作",   type="preset", query="toplist:year"),
-    Section(kind="publication", title="本周热门",   type="preset", query="popular",          count=10),
-    Section(kind="navigation",  title="最新上传",   type="preset", query="latest"),
-    Section(kind="publication", title="中文同人",   type="search", query="language:chinese", count=15),
-    Section(kind="navigation",  title="历史总榜",   type="preset", query="toplist:alltime",  root=True),
-    Section(kind="navigation",  title="我的收藏",   type="preset", query="favorites",        root=True),
-    Section(kind="navigation",  title="日文原版",   type="search", query="language:japanese",root=True),
+    Section(kind="publication", title="昨日最佳", type="preset", query="toplist:yesterday", count=5),
+    Section(kind="navigation",  title="月度精选", type="preset", query="toplist:month",      group="rankings"),
+    Section(kind="navigation",  title="年度佳作", type="preset", query="toplist:year",       group="rankings"),
+    Section(kind="publication", title="本周热门", type="preset", query="popular",            count=10),
+    Section(kind="navigation",  title="最新上传", type="preset", query="latest"),
+    Section(kind="publication", title="中文同人", type="search", query="language:chinese",   count=15),
+    Section(kind="navigation",  title="历史总榜", type="preset", query="toplist:alltime"),
+    Section(kind="navigation",  title="我的收藏", type="preset", query="favorites"),
+    Section(kind="navigation",  title="日文原版", type="search", query="language:japanese"),
 ]
 
 

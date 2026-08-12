@@ -188,11 +188,11 @@ async def root_feed(request: Request):
     """Root OPDS 2.0 document.
 
     Layout is driven by a TOML config — a single flat ``[[section]]`` array.
-    Each section has a ``kind``:
 
-    * ``kind="publication"`` → ``groups[]`` with inline ``publications[]``
-    * ``kind="navigation"`` (no root) → ``groups[]`` with ``navigation[]``
-    * ``kind="navigation"`` + ``root=true`` → root ``navigation[]``
+    * ``kind="publication"`` → standalone ``groups[]`` with ``publications[]``
+    * ``kind="navigation"`` + ``group="root"`` → root ``navigation[]``
+    * ``kind="navigation"`` + ``group="<name>"`` → merged into one ``groups[]``
+      slot (consecutive same-group sections, Komga Libraries-style).
 
     Watched / Favorites are auth-gated: omitted when no IPB cookie is set.
     """
@@ -239,12 +239,12 @@ async def root_feed(request: Request):
                 metas = []
             meta_by_gid = {m.gid: m for m in metas}
 
-    # Phase 3 — build groups[] and base_href() in TOML order.
+    # Phase 3 — build OPDS structure, merging consecutive same-group nav sections.
     groups: list[dict] = []
     root_nav: list[dict] = []
-
-    for s in sections:
-        href = builder.href(build_href(type=s.type, query=s.query))
+    i = 0
+    while i < len(sections):
+        s = sections[i]
 
         if s.kind == "publication":
             g: dict = {
@@ -255,46 +255,63 @@ async def root_feed(request: Request):
                 },
                 "links": [{
                     "rel": "self",
-                    "href": href,
+                    "href": builder.href(build_href(type=s.type, query=s.query)),
                     "type": MIME_ACQ,
                     "title": s.title,
                 }],
             }
             if id(s) in fetched:
-                info = fetched[id(s)]
-                items = info.galleries[: s.count]
+                items = fetched[id(s)].galleries[: s.count]
                 g["publications"] = [
                     _publication(builder, item, meta_by_gid.get(item.gid))
                     for item in items
                 ]
             groups.append(g)
+            i += 1
 
-        elif s.kind == "navigation":
-            if s.root:
-                root_nav.append({
-                    "title": s.title,
-                    "href": build_href(type=s.type, query=s.query),
-                    "summary": s.title,
+        elif s.kind == "navigation" and s.group == "root":
+            root_nav.append({
+                "title": s.title,
+                "href": build_href(type=s.type, query=s.query),
+                "summary": s.title,
+            })
+            i += 1
+
+        else:  # kind="navigation" with non-root group → merge consecutive
+            group_sections = [s]
+            j = i + 1
+            while (
+                j < len(sections)
+                and sections[j].kind == "navigation"
+                and sections[j].group != "root"
+                and sections[j].group == s.group
+            ):
+                group_sections.append(sections[j])
+                j += 1
+
+            first = group_sections[0]
+            nav_links: list[dict] = []
+            for ns in group_sections:
+                nav_links.append({
+                    "title": ns.title,
+                    "href": builder.href(build_href(type=ns.type, query=ns.query)),
+                    "type": MIME_ACQ,
                 })
-            else:
-                groups.append({
-                    "metadata": {
-                        "title": s.title,
-                        "identifier": f"urn:ehentai:group:{s.type}:{s.query}",
-                        "modified": _iso(),
-                    },
-                    "links": [{
-                        "rel": "self",
-                        "href": href,
-                        "type": MIME_ACQ,
-                        "title": s.title,
-                    }],
-                    "navigation": [{
-                        "title": s.title,
-                        "href": href,
-                        "type": MIME_ACQ,
-                    }],
-                })
+            groups.append({
+                "metadata": {
+                    "title": first.title,
+                    "identifier": f"urn:ehentai:group:{first.type}:{first.query}",
+                    "modified": _iso(),
+                },
+                "links": [{
+                    "rel": "self",
+                    "href": builder.href(build_href(type=first.type, query=first.query)),
+                    "type": MIME_ACQ,
+                    "title": first.title,
+                }],
+                "navigation": nav_links,
+            })
+            i = j
 
     content = builder.navigation_document(
         navigation=root_nav or None,

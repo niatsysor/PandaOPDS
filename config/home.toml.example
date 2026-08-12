@@ -1,15 +1,15 @@
 # PandaOPDS 首页布局
 # ====================
 #
-# [[section]]                    # 单一数组，书写顺序 = OPDS 输出顺序
+# [[section]]                          # 单一数组，书写顺序 = OPDS 输出顺序
 #
-# kind = "publication"           → groups[] 含 publications[]（内嵌预览）
-# kind = "navigation"            → groups[] 含 navigation[]（纯导航壳）
-# kind = "navigation"  root=true → 根 navigation[]
+# kind = "publication"                 → groups[] 含 publications[] 内嵌预览
+# kind = "navigation"                  → 根 navigation[]
+# kind = "navigation"  group = "xxx"   → groups[] 合并同组连续条目（Komga 风格）
 #
 # type: "preset" → 内置浏览维度
 #   query: latest / popular / watched / favorites
-#         toplist:yesterday / toplist:month / toplist:year / toplist:alltime
+#          toplist:yesterday / toplist:month / toplist:year / toplist:alltime
 # type: "search" → E-Hentai 自由搜索表达式
 
 [[section]]
@@ -21,12 +21,14 @@ count = 5
 
 [[section]]
 kind = "navigation"
+group = "rankings"
 title = "月度精选"
 type = "preset"
 query = "toplist:month"
 
 [[section]]
 kind = "navigation"
+group = "rankings"
 title = "年度佳作"
 type = "preset"
 query = "toplist:year"
@@ -53,21 +55,18 @@ count = 15
 
 [[section]]
 kind = "navigation"
-root = true
 title = "历史总榜"
 type = "preset"
 query = "toplist:alltime"
 
 [[section]]
 kind = "navigation"
-root = true
 title = "我的收藏"
 type = "preset"
 query = "favorites"
 
 [[section]]
 kind = "navigation"
-root = true
 title = "日文原版"
 type = "search"
 query = "language:japanese"
