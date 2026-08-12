@@ -198,6 +198,75 @@ def test_acquisition_document_structure():
     assert {"self", "start", "search", "next"} <= rels
 
 
+# -- facets -----------------------------------------------------------------
+
+
+def test_acquisition_document_with_facets():
+    builder = Opds2Builder(_settings())
+    pub = _pub(builder)
+    facets = builder.build_category_facets()
+    doc = _load(
+        builder.acquisition_document(
+            title="E-Hentai: Latest",
+            identifier="urn:ehentai:gallery-list:latest",
+            publications=[pub],
+            self_href="/opds/v2.0/gallery",
+            facets=facets,
+        )
+    )
+    assert "facets" in doc
+    fg = doc["facets"][0]
+    assert fg["metadata"]["title"] == "Category"
+    links = fg["links"]
+    # First link is "All" (no category param), then the 10 default categories.
+    assert links[0]["title"] == "All"
+    assert links[0]["href"] == "/opds/v2.0/gallery"
+    assert len(links) == 11  # All + 10 categories
+    # Spot-check a few category facet links.
+    titles = {l["title"] for l in links}
+    assert "Doujinshi" in titles
+    assert "Manga" in titles
+    assert "Western" in titles
+    dou = next(l for l in links if l["title"] == "Doujinshi")
+    assert dou["href"] == "/opds/v2.0/gallery?category=Doujinshi"
+
+
+def test_facets_not_emitted_when_not_provided():
+    builder = Opds2Builder(_settings())
+    pub = _pub(builder)
+    doc = _load(
+        builder.acquisition_document(
+            title="Test",
+            identifier="urn:test",
+            publications=[pub],
+            self_href="/opds/v2.0/gallery",
+        )
+    )
+    assert "facets" not in doc
+
+
+def test_build_category_facets_custom_config():
+    """With a custom FACETS list, only those entries appear."""
+    custom = [("日系", 7), ("Western", 991)]
+    builder = Opds2Builder(_settings(facets=custom))
+    facets = builder.build_category_facets()
+    links = facets[0]["links"]
+    assert links[0]["title"] == "All"
+    assert links[1]["title"] == "日系"
+    assert links[1]["href"] == "/opds/v2.0/gallery?category=日系"
+    assert links[2]["title"] == "Western"
+    assert len(links) == 3  # All + 2 custom
+
+
+def test_facet_links_with_public_base_url():
+    builder = Opds2Builder(_settings(public_base_url="https://opds.example.com"))
+    facets = builder.build_category_facets()
+    links = facets[0]["links"]
+    assert links[0]["href"] == "https://opds.example.com/opds/v2.0/gallery"
+    dou = next(l for l in links if l["title"] == "Doujinshi")
+    assert dou["href"] == "https://opds.example.com/opds/v2.0/gallery?category=Doujinshi"
+
+
 # -- absolute URLs ----------------------------------------------------------
 
 

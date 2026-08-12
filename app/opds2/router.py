@@ -334,9 +334,19 @@ async def gallery_feed(
     request: Request,
     query: str = "",
     next: int | None = None,  # lastGid pagination (from rel="next" href)
+    category: str = "",
 ):
     service = _service(request)
     builder = _builder(request)
+    settings = request.app.state.settings
+
+    # Resolve category name → f_cats exclude mask.
+    f_cats: int | None = None
+    if category:
+        for name, mask in settings.facets:
+            if category.lower() == name.lower():
+                f_cats = mask
+                break
 
     try:
         if query == "popular":
@@ -346,7 +356,7 @@ async def gallery_feed(
         elif query == "favorites":
             info = await service.favorites_galleries(last_gid=next)
         else:
-            info = await service.search_galleries(query=query, last_gid=next)
+            info = await service.search_galleries(query=query, last_gid=next, f_cats=f_cats)
     except Exception as exc:  # mapped to proper statuses by app-level handlers
         logger.warning("gallery feed upstream error: %s", exc)
         raise
@@ -361,11 +371,26 @@ async def gallery_feed(
 
     next_href = None
     if info.next_gid:
-        q = f"&query={quote(query)}" if query else ""
-        next_href = builder.href(f"/opds/v2.0/gallery?next={info.next_gid}{q}")
+        q_parts = []
+        if query:
+            q_parts.append(f"query={quote(query)}")
+        if category:
+            q_parts.append(f"category={quote(category)}")
+        next_href = builder.href(
+            f"/opds/v2.0/gallery?next={info.next_gid}"
+            + ("&" + "&".join(q_parts) if q_parts else "")
+        )
 
     title = _LIST_TITLES.get(query, "Latest") if query else "Latest"
+    if category:
+        title = f"{title} — {category}"
     title = f"E-Hentai: {title}"
+
+    # Only emit facets for the main search feed (not popular/watched/favorites
+    # which use different upstream URLs that may not support f_cats).
+    facets = None
+    if query not in ("popular", "watched", "favorites"):
+        facets = builder.build_category_facets(current_category=category)
 
     content = builder.acquisition_document(
         title=title,
@@ -373,6 +398,7 @@ async def gallery_feed(
         publications=publications,
         self_href="/opds/v2.0/gallery",
         next_href=next_href,
+        facets=facets,
     )
     return Response(
         content=content,

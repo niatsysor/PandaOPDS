@@ -81,6 +81,30 @@ class Settings:
     # upstream page per group.
     home_publications: int = 20
 
+    # --- OPDS 2.0 facets (category filter) ---
+    # Customisable facet entries: each is (display_name, f_cats_exclude_mask).
+    # f_cats is E-Hentai's exclude bitmask (bit 0=1=Misc, bit 1=2=Doujinshi,
+    # bit 2=4=Manga, bit 3=8=Artist CG, bit 4=16=Game CG, bit 5=32=Western,
+    # bit 6=64=Non-H, bit 7=128=Image Set, bit 8=256=Cosplay, bit 9=512=Asian
+    # Porn). To show ONLY Doujinshi, exclude all others: f_cats=1+4+8+16+32+
+    # 64+128+256+512=1021. Users may define custom names with arbitrary masks
+    # (including category combinations) via the FACETS env var.
+    # Format: FACETS=Name1:mask1,Name2:mask2,...
+    facets: list[tuple[str, int]] = field(
+        default_factory=lambda: [
+            ("Doujinshi", 1021),
+            ("Manga", 1019),
+            ("Artist CG", 1015),
+            ("Game CG", 1007),
+            ("Western", 991),
+            ("Non-H", 959),
+            ("Image Set", 895),
+            ("Cosplay", 767),
+            ("Asian Porn", 511),
+            ("Misc", 1022),
+        ]
+    )
+
     # --- derived ---
     @property
     def site_host(self) -> str:
@@ -165,6 +189,38 @@ def load_settings() -> Settings:
         parsed = [k.strip().lower() for k in value.split(",") if k.strip()]
         return parsed or defaults
 
+    def _facets(value: str | None) -> list[tuple[str, int]]:
+        """Parse FACETS: comma-separated Name:mask entries.
+
+        Default: all 10 E-Hentai categories with their exclude masks.
+        Format: "Name1:1021,Name2:1019,..."
+        Empty or unset → defaults.
+        """
+        defaults: list[tuple[str, int]] = [
+            ("Doujinshi", 1021),
+            ("Manga", 1019),
+            ("Artist CG", 1015),
+            ("Game CG", 1007),
+            ("Western", 991),
+            ("Non-H", 959),
+            ("Image Set", 895),
+            ("Cosplay", 767),
+            ("Asian Porn", 511),
+            ("Misc", 1022),
+        ]
+        if value is None or not value.strip():
+            return defaults
+        result: list[tuple[str, int]] = []
+        for entry in value.split(","):
+            entry = entry.strip()
+            if ":" in entry:
+                name, val = entry.rsplit(":", 1)
+                try:
+                    result.append((name.strip(), int(val.strip())))
+                except ValueError:
+                    pass  # skip malformed entries
+        return result or defaults
+
     settings = Settings(
         ipb_member_id=os.getenv("IPB_MEMBER_ID", "").strip(),
         ipb_pass_hash=os.getenv("IPB_PASS_HASH", "").strip(),
@@ -186,5 +242,6 @@ def load_settings() -> Settings:
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
         home_groups=_home_groups(os.getenv("HOME_GROUPS")),
         home_publications=_int(os.getenv("HOME_PUBLICATIONS"), 20),
+        facets=_facets(os.getenv("FACETS")),
     )
     return settings

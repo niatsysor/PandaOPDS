@@ -143,6 +143,7 @@ class Opds2Builder:
         publications: list[dict],
         self_href: str,
         next_href: str | None = None,
+        facets: list[dict] | None = None,
     ) -> str:
         now = _iso()
         doc = {
@@ -160,8 +161,36 @@ class Opds2Builder:
         }
         if next_href:
             doc["links"].append(self._link(REL_NEXT, next_href, MIME_ACQ, "Next page"))
+        if facets:
+            doc["facets"] = facets
         doc["publications"] = publications
         return self.serialize(doc)
+
+    # -- facets -----------------------------------------------------------
+
+    def build_category_facets(self, current_category: str = "") -> list[dict]:
+        """Build the Category facet group from settings.facets.
+
+        Each entry in settings.facets is (display_name, f_cats_mask).  The
+        facet link href uses ``category={name}`` (human-readable); the
+        router maps the name back to the mask at request time.
+        """
+        links: list[dict] = [
+            {
+                "href": self.href(f"/opds/v2.0/gallery?category={name}"),
+                "title": name,
+            }
+            for name, _mask in self.settings.facets
+        ]
+        # Prepend an "All" link that clears the category filter.
+        links.insert(
+            0,
+            {
+                "href": self.href("/opds/v2.0/gallery"),
+                "title": "All",
+            },
+        )
+        return [{"metadata": {"title": "Category"}, "links": links}]
 
     # -- publications ------------------------------------------------------
 

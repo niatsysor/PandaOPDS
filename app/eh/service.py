@@ -108,14 +108,23 @@ class EHService:
         self,
         query: str = "",
         last_gid: int | None = None,
+        f_cats: int | None = None,
     ) -> GalleryPageInfo:
-        """Search / latest list page. `last_gid` enables `next` pagination."""
+        """Search / latest list page.
+
+        `last_gid` enables `next` pagination.
+        `f_cats` is the EH exclude-category bitmask (e.g. 1021 = Doujinshi only).
+        """
         params: dict[str, str] = {}
         if query:
             params["f_search"] = query
+        if f_cats is not None:
+            params["f_cats"] = str(f_cats)
         if last_gid is not None:
             params["next"] = str(last_gid)
-        return await self._list_page("search:" + query, "/", params)
+        # Cache key includes f_cats so different category filters don't collide.
+        q_key = f"{query}:f_cats={f_cats}" if f_cats is not None else query
+        return await self._list_page("search:" + q_key, "/", params)
 
     async def popular_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
         params = {"next": str(last_gid)} if last_gid is not None else {}
