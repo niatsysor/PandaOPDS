@@ -1,41 +1,35 @@
 """Home page configuration loaded from a TOML file.
 
-Declarative layout: a single flat ``[[section]]`` array.  ``kind`` determines
-the OPDS role; ``group`` merges consecutive navigation sections into one
-group slot (Komga Libraries-style).
-
-``type`` ∈ {"preset", "search"}
-  - preset: query is a built-in key (latest, popular, watched, favorites, toplist:*)
-  - search: query is an arbitrary E-Hentai search expression
+``[[group]]`` declares named groups (title, order).  ``[[section]]`` references
+a group via ``group`` field — publication and navigation sections can co-exist
+in the same group.
 
 TOML example::
 
+    [[group]]
+    id = "rankings"
+    title = "排行榜"
+
     [[section]]
+    group = "rankings"
     kind = "publication"
-    title = "Trending"
+    title = "昨日最佳"
     type = "preset"
     query = "toplist:yesterday"
-    count = 20
+    count = 5
+
+    [[section]]
+    group = "rankings"
+    kind = "navigation"
+    title = "月度精选"
+    type = "preset"
+    query = "toplist:month"
 
     [[section]]
     kind = "navigation"
     title = "关注"
     type = "preset"
     query = "watched"
-
-    [[section]]
-    kind = "navigation"
-    group = "rankings"
-    title = "排行榜"
-    type = "preset"
-    query = "toplist:yesterday"
-
-    [[section]]
-    kind = "navigation"
-    group = "rankings"
-    title = "月度精选"
-    type = "preset"
-    query = "toplist:month"
 """
 
 from __future__ import annotations
@@ -63,18 +57,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @dataclass
+class GroupDef:
+    """A named group declaration from TOML."""
+    id: str
+    title: str
+
+
+@dataclass
 class Section:
-    """A single section in the flat TOML array."""
+    """A single section in the flat ``[[section]]`` array."""
     kind: str          # "publication" | "navigation"
     title: str
     type: str          # "preset" | "search"
     query: str
     count: int = 0     # publication count (kind="publication" only)
-    group: str = "root"  # "root" → root navigation[]; else → group key for merging
+    group: str = ""    # GroupDef id; "" → standalone pub or root nav
 
 
 @dataclass
 class HomeConfig:
+    groups: list[GroupDef] = field(default_factory=list)
     sections: list[Section] = field(default_factory=list)
 
 
@@ -157,6 +159,13 @@ def parse_home_toml(path: Path) -> HomeConfig:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
+    groups: list[GroupDef] = []
+    for item in raw.get("group", []):
+        groups.append(GroupDef(
+            id=item["id"],
+            title=item.get("title", item["id"]),
+        ))
+
     sections: list[Section] = []
     for item in raw.get("section", []):
         sections.append(Section(
@@ -165,27 +174,33 @@ def parse_home_toml(path: Path) -> HomeConfig:
             type=item.get("type", "preset"),
             query=item.get("query", "latest"),
             count=item.get("count", 0),
-            group=item.get("group", "root"),
+            group=item.get("group", ""),
         ))
 
-    return HomeConfig(sections=sections)
+    return HomeConfig(groups=groups, sections=sections)
 
 
 # ---------------------------------------------------------------------------
 # Default built-in config
 # ---------------------------------------------------------------------------
 
-DEFAULT_SECTIONS: list[Section] = [
-    Section(kind="publication", title="昨日最佳", type="preset", query="toplist:yesterday", count=5),
-    Section(kind="navigation",  title="月度精选", type="preset", query="toplist:month",      group="rankings"),
-    Section(kind="navigation",  title="年度佳作", type="preset", query="toplist:year",       group="rankings"),
-    Section(kind="publication", title="本周热门", type="preset", query="popular",            count=10),
-    Section(kind="navigation",  title="最新上传", type="preset", query="latest"),
-    Section(kind="publication", title="中文同人", type="search", query="language:chinese",   count=15),
-    Section(kind="navigation",  title="历史总榜", type="preset", query="toplist:alltime"),
-    Section(kind="navigation",  title="我的收藏", type="preset", query="favorites"),
-    Section(kind="navigation",  title="日文原版", type="search", query="language:japanese"),
-]
+DEFAULT_CONFIG = HomeConfig(
+    groups=[
+        GroupDef(id="rankings", title="排行榜"),
+        GroupDef(id="browse", title="浏览"),
+    ],
+    sections=[
+        Section(group="rankings", kind="publication", title="昨日最佳", type="preset", query="toplist:yesterday", count=5),
+        Section(group="rankings", kind="navigation",  title="月度精选", type="preset", query="toplist:month"),
+        Section(group="rankings", kind="navigation",  title="年度佳作", type="preset", query="toplist:year"),
+        Section(group="browse",   kind="publication", title="本周热门", type="preset", query="popular",          count=10),
+        Section(group="browse",   kind="navigation",  title="最新上传", type="preset", query="latest"),
+        Section(                  kind="publication", title="中文同人", type="search", query="language:chinese", count=15),
+        Section(                  kind="navigation",  title="历史总榜", type="preset", query="toplist:alltime"),
+        Section(                  kind="navigation",  title="我的收藏", type="preset", query="favorites"),
+        Section(                  kind="navigation",  title="日文原版", type="search", query="language:japanese"),
+    ],
+)
 
 
 def load_home_config(home_config_path: Path | None) -> HomeConfig:
@@ -199,4 +214,4 @@ def load_home_config(home_config_path: Path | None) -> HomeConfig:
                 "Failed to parse %s, falling back to defaults: %s",
                 home_config_path, exc,
             )
-    return HomeConfig(sections=list(DEFAULT_SECTIONS))
+    return DEFAULT_CONFIG

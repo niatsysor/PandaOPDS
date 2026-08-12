@@ -1,18 +1,33 @@
 # PandaOPDS 首页布局
 # ====================
 #
-# [[section]]                          # 单一数组，书写顺序 = OPDS 输出顺序
+# [[group]]         声明命名组（决定 groups[] 顺序和标题）
+#   id              = 唯一标识符
+#   title           = 组的 metadata.title
 #
-# kind = "publication"                 → groups[] 含 publications[] 内嵌预览
-# kind = "navigation"                  → 根 navigation[]
-# kind = "navigation"  group = "xxx"   → groups[] 合并同组连续条目（Komga 风格）
+# [[section]]       挂载到组或独立出现
+#   group           = 引用 [[group]] 的 id；不设 → 独立
+#   kind            = "publication"（含内嵌预览）| "navigation"（纯链接）
+#   type / query    = "preset" + 内置 key 或 "search" + 搜索表达式
+#   count           = publication 时生效，内嵌预览条数
 #
-# type: "preset" → 内置浏览维度
-#   query: latest / popular / watched / favorites
-#          toplist:yesterday / toplist:month / toplist:year / toplist:alltime
-# type: "search" → E-Hentai 自由搜索表达式
+# 规则：
+#   - 同一 group 的 section 合并进一个 groups[] 槽位（publication + navigation 可混）
+#   - 无 group 的 publication → 独立 groups[] 槽位
+#   - 无 group 的 navigation  → 根 navigation[]
+
+[[group]]
+id = "rankings"
+title = "排行榜"
+
+[[group]]
+id = "browse"
+title = "浏览"
+
+# ---- 排行榜组 ----
 
 [[section]]
+group = "rankings"
 kind = "publication"
 title = "昨日最佳"
 type = "preset"
@@ -20,20 +35,23 @@ query = "toplist:yesterday"
 count = 5
 
 [[section]]
-kind = "navigation"
 group = "rankings"
+kind = "navigation"
 title = "月度精选"
 type = "preset"
 query = "toplist:month"
 
 [[section]]
-kind = "navigation"
 group = "rankings"
+kind = "navigation"
 title = "年度佳作"
 type = "preset"
 query = "toplist:year"
 
+# ---- 浏览组 ----
+
 [[section]]
+group = "browse"
 kind = "publication"
 title = "本周热门"
 type = "preset"
@@ -41,10 +59,13 @@ query = "popular"
 count = 10
 
 [[section]]
+group = "browse"
 kind = "navigation"
 title = "最新上传"
 type = "preset"
 query = "latest"
+
+# ---- 独立 publication ----
 
 [[section]]
 kind = "publication"
@@ -52,6 +73,8 @@ title = "中文同人"
 type = "search"
 query = "language:chinese"
 count = 15
+
+# ---- 根 navigation ----
 
 [[section]]
 kind = "navigation"

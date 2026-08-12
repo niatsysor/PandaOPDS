@@ -153,7 +153,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 | 路由 | 说明 |
 |------|------|
-| `GET /opds/v2.0` | 根导航文档：`groups[]` / `navigation[]` 由 `config/home.toml` 的 `[[section]]` 数组驱动。`kind="publication"` → groups 含内嵌预览；`kind="navigation"` → groups 含纯导航壳或根 navigation（`root=true`）；Watched/Favorites 无 IPB cookie 时自动过滤 |
+| `GET /opds/v2.0` | 根导航文档：`[[group]]` 声明命名组，`[[section]]` 引用组 ID 挂载 publication/navigation 条目；无 group 的 section 独立成组或进入根 navigation；Watched/Favorites 无 IPB cookie 时自动过滤 |
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
@@ -165,9 +165,9 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 **约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，也不在根 feed 混入采集条目。
 
-- **`groups[]`（OPDS 2.0 标准，§2.5）**：每个 group 包含 `metadata.title`、`links`（`rel="self"`）。可含 `publications[]`（`kind="publication"`）和/或 `navigation[]`（`kind="navigation"`，Komga 风格）。**任何兼容 OPDS 2.0 的客户端均可原生渲染**——无需私货标记。
-- **`navigation[]`**：来自 `kind="navigation"` + `root=true` 的条目，以及无 IPB cookie 时省略的 Watched/Favorites。
-- **配置**：`config/home.toml`，单一 `[[section]]` 数组。书写顺序 = OPDS 输出顺序。环境变量 `HOME_CONFIG` 可指定文件路径。
+- **`groups[]`（OPDS 2.0 标准，§2.5）**：每个 group 包含 `metadata.title`、`links`（`rel="self"`）。可含 `publications[]`（`kind="publication"`）和/或 `navigation[]`（`kind="navigation"`，Komga 风格）。同一 `group` 的 section 合并进一个槽位，publication 与 navigation 可混排。**任何兼容 OPDS 2.0 的客户端均可原生渲染**——无需私货标记。
+- **`navigation[]`**：来自无 `group` 的 `kind="navigation"` 条目。
+- **配置**：`config/home.toml`。`[[group]]` 声明组，`[[section]]` 引用 `group` 字段挂载条目。不设文件时使用内置默认布局。
 
 **OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 

@@ -187,12 +187,13 @@ def _publication(
 async def root_feed(request: Request):
     """Root OPDS 2.0 document.
 
-    Layout is driven by a TOML config — a single flat ``[[section]]`` array.
+    Layout is driven by a TOML config: ``[[group]]`` declares named groups;
+    ``[[section]]`` references a group via ``group`` field.  Publication and
+    navigation sections can co-exist in the same group.
 
-    * ``kind="publication"`` → standalone ``groups[]`` with ``publications[]``
-    * ``kind="navigation"`` + ``group="root"`` → root ``navigation[]``
-    * ``kind="navigation"`` + ``group="<name>"`` → merged into one ``groups[]``
-      slot (consecutive same-group sections, Komga Libraries-style).
+    Sections without a ``group``:
+    * ``kind="publication"`` → standalone ``groups[]`` entry
+    * ``kind="navigation"``  → root ``navigation[]`` entry
 
     Watched / Favorites are auth-gated: omitted when no IPB cookie is set.
     """
@@ -208,7 +209,9 @@ async def root_feed(request: Request):
             return False
         return True
 
+    # Collect all visible sections; group definitions always visible.
     sections = [s for s in home.sections if _visible(s)]
+    group_defs: dict[str, str] = {g.id: g.title for g in home.groups}
 
     # Phase 1 — concurrently fetch list pages for publication sections.
     pub_sections = [s for s in sections if s.kind == "publication" and s.count > 0]
@@ -239,83 +242,79 @@ async def root_feed(request: Request):
                 metas = []
             meta_by_gid = {m.gid: m for m in metas}
 
-    # Phase 3 — build OPDS structure, merging consecutive same-group nav sections.
-    groups: list[dict] = []
-    root_nav: list[dict] = []
-    i = 0
-    while i < len(sections):
-        s = sections[i]
+    # Phase 3 — collect sections by group; preserve insertion order.
+    grouped: dict[str, list[Section]] = {}   # group_id → sections
+    ungrouped: list[Section] = []            # sections without group (in order)
+    for s in sections:
+        if s.group:
+            grouped.setdefault(s.group, []).append(s)
+        else:
+            ungrouped.append(s)
 
-        if s.kind == "publication":
-            g: dict = {
-                "metadata": {
+    # Phase 4 — walk ungrouped sections in TOML order; emit named groups
+    # at the position of their first referencing section (we approximate
+    # by emitting them before ungrouped when they share a position, which
+    # is fine since named groups are declared separately).
+    #
+    # Strategy: walk sections, emit each unique group on first encounter.
+    groups_out: list[dict] = []
+    root_nav: list[dict] = []
+    emitted_groups: set[str] = set()
+
+    def _emit_group(gid: str, grp_sections: list[Section]) -> dict:
+        """Build an OPDS group dict from a list of sections."""
+        title = group_defs.get(gid, grp_sections[0].title)
+        first = grp_sections[0]
+        g: dict = {
+            "metadata": {
+                "title": title,
+                "identifier": f"urn:ehentai:group:{gid}",
+                "modified": _iso(),
+            },
+            "links": [{
+                "rel": "self",
+                "href": builder.href(build_href(type=first.type, query=first.query)),
+                "type": MIME_ACQ,
+                "title": title,
+            }],
+        }
+        pubs: list[dict] = []
+        navs: list[dict] = []
+        for s in grp_sections:
+            if s.kind == "publication" and id(s) in fetched:
+                items = fetched[id(s)].galleries[: s.count]
+                for item in items:
+                    pubs.append(_publication(builder, item, meta_by_gid.get(item.gid)))
+            elif s.kind == "navigation":
+                navs.append({
                     "title": s.title,
-                    "identifier": f"urn:ehentai:group:{s.type}:{s.query}",
-                    "modified": _iso(),
-                },
-                "links": [{
-                    "rel": "self",
                     "href": builder.href(build_href(type=s.type, query=s.query)),
                     "type": MIME_ACQ,
-                    "title": s.title,
-                }],
-            }
-            if id(s) in fetched:
-                items = fetched[id(s)].galleries[: s.count]
-                g["publications"] = [
-                    _publication(builder, item, meta_by_gid.get(item.gid))
-                    for item in items
-                ]
-            groups.append(g)
-            i += 1
-
-        elif s.kind == "navigation" and s.group == "root":
-            root_nav.append({
-                "title": s.title,
-                "href": build_href(type=s.type, query=s.query),
-                "summary": s.title,
-            })
-            i += 1
-
-        else:  # kind="navigation" with non-root group → merge consecutive
-            group_sections = [s]
-            j = i + 1
-            while (
-                j < len(sections)
-                and sections[j].kind == "navigation"
-                and sections[j].group != "root"
-                and sections[j].group == s.group
-            ):
-                group_sections.append(sections[j])
-                j += 1
-
-            first = group_sections[0]
-            nav_links: list[dict] = []
-            for ns in group_sections:
-                nav_links.append({
-                    "title": ns.title,
-                    "href": builder.href(build_href(type=ns.type, query=ns.query)),
-                    "type": MIME_ACQ,
                 })
-            groups.append({
-                "metadata": {
-                    "title": first.title,
-                    "identifier": f"urn:ehentai:group:{first.type}:{first.query}",
-                    "modified": _iso(),
-                },
-                "links": [{
-                    "rel": "self",
-                    "href": builder.href(build_href(type=first.type, query=first.query)),
-                    "type": MIME_ACQ,
-                    "title": first.title,
-                }],
-                "navigation": nav_links,
-            })
-            i = j
+        if pubs:
+            g["publications"] = pubs
+        if navs:
+            g["navigation"] = navs
+        return g
+
+    for s in sections:
+        if s.group:
+            if s.group not in emitted_groups:
+                groups_out.append(_emit_group(s.group, grouped[s.group]))
+                emitted_groups.add(s.group)
+        else:
+            if s.kind == "publication":
+                groups_out.append(_emit_group(f"__s_{id(s)}", [s]))
+            else:
+                root_nav.append({
+                    "title": s.title,
+                    "href": build_href(type=s.type, query=s.query),
+                    "summary": s.title,
+                })
 
     content = builder.navigation_document(
         navigation=root_nav or None,
-        groups=groups or None,
+        groups=groups_out or None,
     )
     return Response(
         content=content,
