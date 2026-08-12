@@ -24,6 +24,7 @@ services:
       MAX_CONCURRENCY: ${MAX_CONCURRENCY:-2}
     volumes:
       - cache-data:/data/cache
+      - ./config:/config          # home.toml lives here
 
 volumes:
   cache-data:

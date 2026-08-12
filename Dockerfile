@@ -1,7 +1,8 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HOME_CONFIG=/config/home.toml
 
 WORKDIR /srv/pandaopds
 
@@ -9,6 +10,8 @@ COPY pyproject.toml ./
 COPY app ./app
 
 RUN pip install --no-cache-dir .
+
+RUN mkdir -p /config
 
 EXPOSE 8000
 

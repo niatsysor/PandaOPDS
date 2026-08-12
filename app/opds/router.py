@@ -10,6 +10,11 @@ from fastapi.responses import Response
 
 from ..eh.models import GalleryListItem, GalleryMetadata
 from ..eh.service import EHService
+from ..home_config import (
+    build_href,
+    is_auth_required,
+    load_home_config,
+)
 from .feed import (
     MIME_ACQ,
     MIME_NAV,
@@ -27,21 +32,6 @@ from .feed import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opds/v1.2", tags=["opds"])
-
-# Root navigation entries (v1.2, pure navigation — no extensions, no
-# publications mixing). Home is intentionally absent: on v1.2 the Latest feed
-# lives at /opds/v1.2/gallery (no Home entry; the v2.0 home embeds Latest as
-# top-level publications instead). Watched/Favorites are auth-gated.
-_ROOT_NAV_BASE = [
-    ("Watched", "/opds/v1.2/gallery?query=watched", "Watched galleries", "watched"),
-    ("Favorites", "/opds/v1.2/gallery?query=favorites", "Favorite galleries", "favorites"),
-    ("Popular", "/opds/v1.2/gallery?query=popular", "Popular this week", "popular"),
-    ("Toplist: Yesterday", "/opds/v1.2/toplist?period=yesterday", "Top galleries of the last 24 hours", "toplist:yesterday"),
-    ("Toplist: Past Month", "/opds/v1.2/toplist?period=month", "Top galleries of the past month", "toplist:month"),
-    ("Toplist: Past Year", "/opds/v1.2/toplist?period=year", "Top galleries of the past year", "toplist:year"),
-    ("Toplist: All Time", "/opds/v1.2/toplist?period=alltime", "Top galleries of all time", "toplist:alltime"),
-    ("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries", "search"),
-]
 
 # Gallery list titles for the built-in browsing dimensions.
 _LIST_TITLES = {"popular": "Popular", "watched": "Watched", "favorites": "Favorites"}
@@ -126,14 +116,35 @@ def _gallery_entry(
 
 @router.get("", response_class=Response)
 async def root_feed(request: Request):
+    """Root OPDS 1.2 navigation feed.
+
+    Flattens the home TOML config (groups + navigation) into a single
+    navigation list.  v1.2 has no ``groups[]`` — everything is a plain
+    navigation link.
+    """
     builder = _builder(request)
     settings = request.app.state.settings
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
-    nav = [
-        (title, href, summary)
-        for title, href, summary, key in _ROOT_NAV_BASE
-        if not (key in ("watched", "favorites") and not has_auth)
-    ]
+    home = load_home_config(settings.home_config_path)
+
+    def _visible(type: str, query: str) -> bool:
+        if is_auth_required(type, query) and not has_auth:
+            return False
+        return True
+
+    nav: list[tuple[str, str, str]] = []
+    for g in home.groups:
+        if _visible(g.type, g.query):
+            href = build_href(type=g.type, query=g.query, base="/opds/v1.2")
+            nav.append((g.title, href, g.title))
+    for n in home.navigation:
+        if _visible(n.type, n.query):
+            href = build_href(type=n.type, query=n.query, base="/opds/v1.2")
+            nav.append((n.title, href, n.title))
+
+    # Keep OpenSearch as the last nav entry (protocol-level, not in TOML).
+    nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))
+
     return Response(
         content=builder.root_feed(nav),
         media_type=MIME_NAV,

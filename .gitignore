@@ -11,6 +11,7 @@ venv/
 # Runtime data
 cache/
 tests/fixtures/
+config/home.toml
 
 # Reference repo (own git history, read-only per AGENTS.md)
 example/

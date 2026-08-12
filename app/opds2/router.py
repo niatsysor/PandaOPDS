@@ -12,8 +12,15 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from ..eh.models import GalleryListItem, GalleryMetadata, GalleryTag
+from ..eh.models import GalleryListItem, GalleryMetadata, GalleryPageInfo, GalleryTag
 from ..eh.service import EHService
+from ..home_config import (
+    Section,
+    build_href,
+    fetch_section,
+    is_auth_required,
+    load_home_config,
+)
 from .feed import (
     MIME_ACQ,
     MIME_NAV,
@@ -24,20 +31,6 @@ from .feed import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opds/v2.0", tags=["opds2"])
-
-# All known sections. Items listed in HOME_GROUPS appear as groups with inline
-# publication previews on the root document; the rest (minus auth-gated ones
-# when no cookie) appear as plain navigation entries.
-_SECTIONS = [
-    ("Latest", "/opds/v2.0/gallery", "Latest galleries", "latest"),
-    ("Watched", "/opds/v2.0/gallery?query=watched", "Watched galleries", "watched"),
-    ("Favorites", "/opds/v2.0/gallery?query=favorites", "Favorite galleries", "favorites"),
-    ("Popular", "/opds/v2.0/gallery?query=popular", "Popular this week", "popular"),
-    ("Toplist: Yesterday", "/opds/v2.0/toplist?period=yesterday", "Top galleries of the last 24 hours", "toplist:yesterday"),
-    ("Toplist: Past Month", "/opds/v2.0/toplist?period=month", "Top galleries of the past month", "toplist:month"),
-    ("Toplist: Past Year", "/opds/v2.0/toplist?period=year", "Top galleries of the past year", "toplist:year"),
-    ("Toplist: All Time", "/opds/v2.0/toplist?period=alltime", "Top galleries of all time", "toplist:alltime"),
-]
 
 # Gallery list titles for the built-in browsing dimensions.
 _LIST_TITLES = {"popular": "Popular", "watched": "Watched", "favorites": "Favorites"}
@@ -97,6 +90,11 @@ def _merge_tags(
             t = GalleryTag(t.namespace, t.key, o.status, o.style)
         out.append(t)
     return out
+
+
+def _sort_tags(tags: list[GalleryTag]) -> list[GalleryTag]:
+    """Stable sort: highlighted tags (with style) first, matching EH web display."""
+    return sorted(tags, key=lambda t: t.style is None)
 
 
 def _tag_payload(t: GalleryTag) -> dict:
@@ -163,7 +161,7 @@ def _publication(
         # overlay featured-tag styles parsed from the list page (layout
         # dependent: compact/extended full, thumbnail featured-only, minimal
         # none) onto the gdata tag set
-        extensions = _extensions(meta, _merge_tags(all_tags, item.tags))
+        extensions = _extensions(meta, _sort_tags(_merge_tags(all_tags, item.tags)))
 
     return builder.publication(
         gid=item.gid,
@@ -181,97 +179,54 @@ def _publication(
     )
 
 
-async def _fetch_list_page(
-    service: EHService,
-    key: str,
-) -> tuple[str, str, str, GalleryPageInfo] | None:
-    """Fetch one list page. Returns (key, title, href, info) or None on failure."""
-    try:
-        if key == "latest":
-            info = await service.search_galleries(query="")
-            return (key, "Latest", "/opds/v2.0/gallery", info)
-        elif key == "popular":
-            info = await service.popular_galleries()
-            return (key, "Popular", "/opds/v2.0/gallery?query=popular", info)
-        elif key == "watched":
-            info = await service.watched_galleries()
-            return (key, "Watched", "/opds/v2.0/gallery?query=watched", info)
-        elif key == "favorites":
-            info = await service.favorites_galleries()
-            return (key, "Favorites", "/opds/v2.0/gallery?query=favorites", info)
-        elif key.startswith("toplist:"):
-            period = key.split(":", 1)[1]
-            info = await service.toplist_galleries(period=period)
-            title = {"yesterday": "Toplist: Yesterday", "month": "Toplist: Past Month",
-                     "year": "Toplist: Past Year", "alltime": "Toplist: All Time"}.get(period, key)
-            return (key, title, f"/opds/v2.0/toplist?period={period}", info)
-        else:
-            logger.warning("unknown home group key %r", key)
-            return None
-    except Exception as exc:
-        logger.warning("home group %s list error: %s", key, exc)
-        return None
-
-
 @router.get("", response_class=Response)
 async def root_feed(request: Request):
     """Root OPDS 2.0 document.
 
-    Sections listed in ``HOME_GROUPS`` are rendered as ``groups[]`` entries
-    with inline publication previews (OPDS 2.0 §2.5).  The remaining sections
-    appear in the standard ``navigation[]`` array.
-    Watched / Favorites are auth-gated: omitted entirely when no IPB cookie
-    is configured.
+    Layout is driven by a TOML config (see ``home_config``).  Sections of
+    type ``[[group]]`` are rendered as ``groups[]`` with inline publication
+    previews; ``[[navigation]]`` sections become root ``navigation[]`` links.
+    Watched / Favorites are auth-gated: omitted when no IPB cookie is set.
 
-    Implementation note: list pages are fetched concurrently, then **all**
-    gdata metadata is merged into a single batched ``get_metadatas()`` call
-    so the API never exceeds the 4–5 request safe window.
+    All group list pages are fetched concurrently, then **all** gdata metadata
+    is merged into a single batched ``get_metadatas()`` call so the API never
+    exceeds the 4–5 request safe window.
     """
     service = _service(request)
     builder = _builder(request)
     settings = request.app.state.settings
 
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
-    home_group_keys = set(settings.home_groups)
+    home = load_home_config(settings.home_config_path)
 
-    # Partition sections: groups (inline previews) vs navigation (links only).
-    nav_items: list[dict] = []
-    list_tasks: list[asyncio.Task] = []
+    def _visible(s: Section) -> bool:
+        if is_auth_required(s.type, s.query) and not has_auth:
+            return False
+        return True
 
-    for title, href, summary, key in _SECTIONS:
-        if key in ("watched", "favorites") and not has_auth:
-            continue
-        if key in home_group_keys:
-            list_tasks.append(
-                asyncio.create_task(_fetch_list_page(service, key))
-            )
+    visible_groups = [g for g in home.groups if _visible(g)]
+    visible_nav = [n for n in home.navigation if _visible(n)]
+
+    # Phase 1 — concurrently fetch all group list pages.
+    results = await asyncio.gather(
+        *[fetch_section(service, g) for g in visible_groups],
+        return_exceptions=True,
+    )
+    paired: list[tuple[Section, GalleryPageInfo]] = []
+    for section, result in zip(visible_groups, results):
+        if isinstance(result, Exception):
+            logger.warning("home group %r list error: %s", section.title, result)
         else:
-            nav_items.append({"title": title, "href": href, "summary": summary})
-
-    # Phase 1 — await all list pages concurrently.
-    list_results: list[tuple[str, str, str, GalleryPageInfo]] = []
-    if list_tasks:
-        done, _pending = await asyncio.wait(list_tasks)
-        for task in done:
-            try:
-                result = task.result()
-                if result is not None:
-                    list_results.append(result)
-            except Exception as exc:
-                logger.warning("home group list error: %s", exc)
+            paired.append((section, result))
 
     # Phase 2 — collect all unique gids, fetch metadata in ONE merged batch.
-    # This is the critical defence: instead of N independent get_metadatas()
-    # calls (N× batch fragmentation), we issue a single call → ≤ 4 API
-    # requests total (100 gid / 25 per batch), staying within the EH API
-    # safe window of 4–5 sequential requests.
     groups: list[dict] = []
-    if list_results:
-        all_gids: dict[tuple[int, str], int] = {}  # (gid,token) -> list idx
-        group_data: list[tuple[str, str, str, list[GalleryListItem]]] = []
-        for idx, (key, title, href, info) in enumerate(list_results):
-            items = info.galleries[: settings.home_publications]
-            group_data.append((key, title, href, items))
+    if paired:
+        all_gids: dict[tuple[int, str], int] = {}
+        group_data: list[tuple[Section, list[GalleryListItem]]] = []
+        for idx, (section, info) in enumerate(paired):
+            items = info.galleries[: section.publications]
+            group_data.append((section, items))
             for item in items:
                 all_gids.setdefault((item.gid, item.token), idx)
 
@@ -283,25 +238,35 @@ async def root_feed(request: Request):
         meta_by_gid = {m.gid: m for m in metas}
 
         # Phase 3 — build publication dicts and group dicts.
-        for key, title, href, items in group_data:
+        for section, items in group_data:
             publications = [
                 _publication(builder, item, meta_by_gid.get(item.gid))
                 for item in items
             ]
             groups.append({
                 "metadata": {
-                    "title": title,
-                    "identifier": f"urn:ehentai:group:{key}",
+                    "title": section.title,
+                    "identifier": f"urn:ehentai:group:{section.type}:{section.query}",
                     "modified": _iso(),
                 },
                 "links": [{
                     "rel": "self",
-                    "href": builder.href(href),
+                    "href": builder.href(build_href(type=section.type, query=section.query)),
                     "type": MIME_ACQ,
-                    "title": title,
+                    "title": section.title,
                 }],
                 "publications": publications,
             })
+
+    # Root navigation items.
+    nav_items: list[dict] = [
+        {
+            "title": nav.title,
+            "href": build_href(type=nav.type, query=nav.query),
+            "summary": nav.title,
+        }
+        for nav in visible_nav
+    ]
 
     content = builder.navigation_document(
         navigation=nav_items or None,
@@ -484,7 +449,7 @@ async def gallery_detail(request: Request, gid: int, token: str):
 
     all_tags = _all_tags(meta)
     subjects = _flatten_subjects(all_tags)
-    merged = _merge_tags(all_tags, detail_tags) if detail_tags else all_tags
+    merged = _sort_tags(_merge_tags(all_tags, detail_tags) if detail_tags else all_tags)
 
     summary_parts = [
         f"Language: {meta.language}",

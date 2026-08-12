@@ -66,8 +66,8 @@
 
 | 组件 | 内容 | 说明 |
 |---|---|---|
-| `groups[]` | 内联 publication 预览的分组区块 | `HOME_GROUPS` 环境变量控制哪些区块出现在首页（默认 `latest,popular,toplist:yesterday,toplist:month`） |
-| `navigation[]` | 纯导航链接（不含 extensions） | 不在 `HOME_GROUPS` 中的区块退化为导航链接；Watched/Favorites 无 IPB cookie 时不输出 |
+| `groups[]` | 内联 publication 预览的分组区块 | `config/home.toml`（`[[group]]`）控制；环境变量 `HOME_CONFIG` 可指定路径 |
+| `navigation[]` | 纯导航链接（不含 extensions） | `config/home.toml`（`[[navigation]]`）控制；Watched/Favorites 无 IPB cookie 时不输出 |
 | `links[].rel="search"` | 搜索模板 | 顶层 link，客户端替换 `{searchTerms}` 即得搜索结果 |
 
 ### 2.2 groups[] 元素结构（OPDS 2.0 标准，§2.5）
@@ -78,7 +78,7 @@
 | `metadata.identifier` | `urn:ehentai:group:{key}` |
 | `metadata.modified` | ISO8601（UTC） |
 | `links[0]` | `rel="self"`，`href` = 该区块的完整采集文档 |
-| `publications[]` | 内联预览条目（前 `HOME_PUBLICATIONS` 条，默认 20），字段见 §3 |
+| `publications[]` | 内联预览条目（数量由 TOML `publications` 字段控制），字段见 §3 |
 
 每个 group 是 OPDS 2.0 标准结构——**任何兼容客户端均可原生渲染为分栏网格**，无需私货标记。
 
@@ -95,20 +95,19 @@
 
 ### 2.4 所有已知区块清单
 
-| title | key | href | 出现条件 |
+| title | type / query | href | 出现条件 |
 |---|---|---|---|
-| Latest | `latest` | `/opds/v2.0/gallery` | 恒有（默认在 groups） |
-| Watched | `watched` | `/opds/v2.0/gallery?query=watched` | 有 IPB cookie |
-| Favorites | `favorites` | `/opds/v2.0/gallery?query=favorites` | 有 IPB cookie |
-| Popular | `popular` | `/opds/v2.0/gallery?query=popular` | 恒有（默认在 groups） |
-| Toplist: Yesterday | `toplist:yesterday` | `/opds/v2.0/toplist?period=yesterday` | 恒有（默认在 groups） |
-| Toplist: Past Month | `toplist:month` | `/opds/v2.0/toplist?period=month` | 恒有（默认在 groups） |
-| Toplist: Past Year | `toplist:year` | `/opds/v2.0/toplist?period=year` | 恒有（默认在 navigation） |
-| Toplist: All Time | `toplist:alltime` | `/opds/v2.0/toplist?period=alltime` | 恒有（默认在 navigation） |
+| Latest | `preset` / `latest` | `/opds/v2.0/gallery` | 恒有 |
+| Watched | `preset` / `watched` | `/opds/v2.0/gallery?query=watched` | 有 IPB cookie |
+| Favorites | `preset` / `favorites` | `/opds/v2.0/gallery?query=favorites` | 有 IPB cookie |
+| Popular | `preset` / `popular` | `/opds/v2.0/gallery?query=popular` | 恒有 |
+| Toplist: Yesterday | `preset` / `toplist:yesterday` | `/opds/v2.0/toplist?period=yesterday` | 恒有 |
+| Toplist: Past Month | `preset` / `toplist:month` | `/opds/v2.0/toplist?period=month` | 恒有 |
+| Toplist: Past Year | `preset` / `toplist:year` | `/opds/v2.0/toplist?period=year` | 恒有 |
+| Toplist: All Time | `preset` / `toplist:alltime` | `/opds/v2.0/toplist?period=alltime` | 恒有 |
+| 自定义搜索 | `search` / 任意表达式 | `/opds/v2.0/gallery?query=…` | 恒有 |
 
-**服务端调控**：
-- `HOME_GROUPS` 环境变量（逗号分隔 key）控制哪些区块在 `groups[]` 中内联预览；未列出的落入 `navigation[]`。
-- `HOME_PUBLICATIONS`（默认 20）控制每个 group 的预览条目数。
+**服务端调控**：`config/home.toml`（`[[group]]` / `[[navigation]]`），环境变量 `HOME_CONFIG` 可指定路径。书写顺序 = 输出顺序；`publications` 字段控制预览条数。
 
 ---
 
@@ -307,4 +306,4 @@
 4. 搜索：用顶层 `search` link 的 JSON 模板替换 `{searchTerms}`。
 5. 分页：`rel="next"`（gallery 传 `next`，toplist 传 `page`）。
 6. 详情：`/opds/v2.0/gallery/{gid}/{token}` 取完整 tags（status/style）；首页/列表的 tags 已含高亮 overlay，可直接渲染。
-7. 失效兜底：单个 group 上游故障时该 group 不出现在 `groups[]` 中（其他 groups 和 navigation 照常）；`HOME_GROUPS`/`HOME_PUBLICATIONS` 为服务端开关，客户端无需感知。
+7. 失效兜底：单个 group 上游故障时该 group 不出现在 `groups[]` 中（其他 groups 和 navigation 照常）；首页布局由 `home.toml` 配置驱动，客户端无需感知。

@@ -83,21 +83,15 @@ class Settings:
     # profile. Leave empty to only use per-request ``inline_set`` overrides.
     eh_profile: str = ""
 
-    # --- Home navigation (v2.0 server-driven layout) ---
-    # Sections rendered as ``groups[]`` on the root OPDS 2.0 document, each
-    # carrying an inline ``publications[]`` preview (OPDS 2.0 §2.5). Keys:
-    # ``latest``, ``popular``, ``watched``, ``favorites``,
-    # ``toplist:yesterday``, ``toplist:month``, ``toplist:year``,
-    # ``toplist:alltime``. Sections not listed here become plain
-    # ``navigation[]`` links (except Watched/Favorites, which are omitted
-    # entirely when no IPB cookie is configured).
-    home_groups: list[str] = field(
-        default_factory=lambda: ["latest", "popular", "toplist:yesterday", "toplist:month"]
-    )
-    # How many publications each home group embeds. E-Hentai pages hold 25
-    # items (list) / 20 items (detail thumbs), so a value ≤ 25 costs one
-    # upstream page per group.
-    home_publications: int = 20
+    # --- Home navigation (TOML-driven layout) ---
+    # Path to a TOML file declaring ``[[group]]`` and ``[[navigation]]``
+    # sections.  Each section is a ``(type, query)`` pair:
+    #   type="preset" → built-in key (latest/popular/watched/favorites/toplist:*)
+    #   type="search" → arbitrary E-Hentai search expression
+    # Groups carry an inline ``publications[]`` preview; navigation entries
+    # are plain links.  When unset or the file is missing, a built-in default
+    # layout is used.
+    home_config_path: Path = field(default_factory=lambda: Path("./config/home.toml"))
 
     # --- OPDS 2.0 facets (category filter) ---
     # Customisable facet entries: each is (display_name, f_cats_exclude_mask).
@@ -210,14 +204,6 @@ def load_settings() -> Settings:
             return default
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
-    def _home_groups(value: str | None) -> list[str]:
-        """Parse HOME_GROUPS: comma-separated keys, defaults if empty."""
-        defaults = ["latest", "popular", "toplist:yesterday", "toplist:month"]
-        if value is None or not value.strip():
-            return defaults
-        parsed = [k.strip().lower() for k in value.split(",") if k.strip()]
-        return parsed or defaults
-
     def _facets(value: str | None) -> list[tuple[str, int]]:
         """Parse FACETS: comma-separated Name:mask entries.
 
@@ -271,8 +257,7 @@ def load_settings() -> Settings:
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
         list_layout=os.getenv("LIST_LAYOUT", "extended").strip().lower(),
         eh_profile=os.getenv("EH_PROFILE", "").strip(),
-        home_groups=_home_groups(os.getenv("HOME_GROUPS")),
-        home_publications=_int(os.getenv("HOME_PUBLICATIONS"), 20),
+        home_config_path=Path(os.getenv("HOME_CONFIG", "./config/home.toml")),
         facets=_facets(os.getenv("FACETS")),
     )
     return settings

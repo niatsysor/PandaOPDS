@@ -153,7 +153,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 | 路由 | 说明 |
 |------|------|
-| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`groups[]` = 各区块内联 publication 预览（OPDS 2.0 §2.5，由 `HOME_GROUPS` 控制，默认 `latest,popular,toplist:yesterday,toplist:month`，每组 `HOME_PUBLICATIONS` 条，默认 20）；`navigation[]` = 其余区块的纯导航链接（无 extensions）；Watched/Favorites 按 cookie 过滤 |
+| `GET /opds/v2.0` | 根导航文档（`application/opds+json;profile=navigation`）：`groups[]` = 各区块内联 publication 预览（OPDS 2.0 §2.5，由 `config/home.toml` 的 `[[group]]` 控制，书写顺序 = 输出顺序）；`navigation[]` = `[[navigation]]` 纯导航链接（无 extensions）；Watched/Favorites 无 IPB cookie 时自动过滤 |
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
@@ -165,9 +165,9 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 **约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，也不在根 feed 混入采集条目。
 
-- **`groups[]`（OPDS 2.0 标准，§2.5）**：根文档 `groups[]` 中每个 group 包含 `metadata.title`、`links`（`rel="self"` 指向完整列表）、`publications[]`（内联预览条目）。**任何兼容 OPDS 2.0 的客户端均可原生渲染为分栏网格**——无需私货标记。`HOME_GROUPS` 环境变量（逗号分隔 key）控制哪些区块出现在 groups 中；未列出的落入 `navigation[]` 作为纯导航链接。
-- **`navigation[]`**：`navigation[]` 仅包含不在 `HOME_GROUPS` 中的区块（如 Watched/Favorites 默认不在 groups），以及无 IPB cookie 时省略的 Watched/Favorites。不再输出 `extensions.layout` 私货。
-- **配置**：`HOME_GROUPS`（逗号分隔 key，默认 `latest,popular,toplist:yesterday,toplist:month`）；`HOME_PUBLICATIONS`（每组预览条目数，默认 20）。
+- **`groups[]`（OPDS 2.0 标准，§2.5）**：根文档 `groups[]` 中每个 group 包含 `metadata.title`、`links`（`rel="self"` 指向完整列表）、`publications[]`（内联预览条目，数量由 TOML `publications` 字段控制）。**任何兼容 OPDS 2.0 的客户端均可原生渲染为分栏网格**——无需私货标记。
+- **`navigation[]`**：`navigation[]` 来自 `[[navigation]]` 条目，以及无 IPB cookie 时省略的 Watched/Favorites。不再输出 `extensions.layout` 私货。
+- **配置**：`config/home.toml`（`[[group]]` / `[[navigation]]`），环境变量 `HOME_CONFIG` 可指定文件路径。不设文件时使用内置默认布局。
 
 **OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 
