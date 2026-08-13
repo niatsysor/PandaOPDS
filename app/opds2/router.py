@@ -372,7 +372,7 @@ async def gallery_feed(
             + ("&" + "&".join(q_parts) if q_parts else "")
         )
 
-    title = _LIST_TITLES.get(query, "Latest") if query else "Latest"
+    title = _LIST_TITLES.get(query, "Search") if query else "Latest"
     if category:
         title = f"{title} — {category}"
     title = f"E-Hentai: {title}"

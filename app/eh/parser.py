@@ -508,8 +508,13 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
     def _nav_page() -> int | None:
         """Ranklist/toplist pages use `.ptt` page-number pagination (`?p=`)
         and have no `#unext` lastGid link. Aligns with JHenTai
-        `_ranklistPageDocument2NextPageIndex`: next page number comes from the
-        last `<td>` of the `.ptt` row.
+        `_ranklistPageDocument2NextPageIndex`: the next page's existence comes
+        from the last `<td>` of the `.ptt` row (the last page renders the
+        disabled "Next ›" arrow as a plain `<td>` without a link).
+
+        E-Hentai toplist `p` is 0-based: displayed page N maps to `p=N-1` and
+        the "Next ›" link on displayed N points at `p=N`. The OPDS `page` API
+        is 1-based (the displayed page number), so the next page is `p + 1`.
         """
         tr = _first(doc, ".ptt tr")
         if tr is None:
@@ -519,7 +524,7 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
             return None
         a = _first(tds[-1], "a")
         m = re.search(r"p(?:age)?=(\d+)", _attr(a, "href") or "")
-        return int(m.group(1)) if m else None
+        return int(m.group(1)) + 1 if m else None
 
     total_count: int | None = None
     search_text = _text(_first(doc, ".searchtext"))

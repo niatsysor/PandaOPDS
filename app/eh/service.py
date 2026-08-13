@@ -175,7 +175,9 @@ class EHService:
             )
         params: dict[str, str] = {"tl": str(tl)}
         if page > 1:
-            params["p"] = str(page)
+            # OPDS `page` is 1-based (displayed page number); the upstream
+            # toplist `p` is 0-based (displayed N <-> p=N-1).
+            params["p"] = str(page - 1)
         return await self._list_page(f"toplist:{period}:{page}", "https://e-hentai.org/toplist.php", params)
 
     async def _html_get(self, path: str, params: dict[str, str] | None = None) -> str:

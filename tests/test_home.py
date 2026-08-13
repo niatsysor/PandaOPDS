@@ -65,14 +65,18 @@ def _gallery_rows(n: int) -> str:
 
 
 def ranklist_html(n: int = 2) -> str:
-    """Ranklist page: extended rows + `.ptt` pagination, no `#unext`."""
+    """Ranklist page: extended rows + `.ptt` pagination, no `#unext`.
+
+    Mirrors the real site's 0-based `p`: displayed page 1's "Next ›" link
+    points at `p=1` (displayed page 2).
+    """
     return (
         "<html><body>"
         f'<table class="itg glte">{_gallery_rows(n)}</table>'
         '<div class="ptt"><table><tr>'
         '<td><a href="/toplist.php?tl=15">First</a></td>'
         "<td>1</td><td>2</td>"
-        '<td><a href="/toplist.php?tl=15&amp;p=2">Next &gt;</a></td>'
+        '<td><a href="/toplist.php?tl=15&amp;p=1">Next &gt;</a></td>'
         "</tr></table></div>"
         "</body></html>"
     )
@@ -102,6 +106,26 @@ def test_ranklist_last_page_has_no_next_page():
     assert info.next_page is None
 
 
+def test_ranklist_next_page_maps_0based_upstream_p():
+    """E-Hentai toplist `p` is 0-based (displayed N <-> p=N-1): the "Next ›"
+    link on displayed page 3 (p=2) points at p=3, and the OPDS `page` is the
+    1-based displayed number, so next_page is 4 — not the raw p."""
+    html = (
+        "<html><body>"
+        f'<table class="itg glte">{_gallery_rows(1)}</table>'
+        '<div class="ptt"><table><tr>'
+        '<td><a href="/toplist.php?tl=15&amp;p=1">&lt;</a></td>'
+        "<td>1</td><td>2</td>"
+        '<td class="ptds"><a href="/toplist.php?tl=15&amp;p=2">3</a></td>'
+        '<td><a href="/toplist.php?tl=15&amp;p=3">Next &gt;</a></td>'
+        "</tr></table></div>"
+        "</body></html>"
+    )
+    info = parse_list_page(html)
+    assert info.next_gid is None
+    assert info.next_page == 4
+
+
 # --------------------------------------------------------------------------
 # EHService.toplist_galleries
 # --------------------------------------------------------------------------
@@ -120,7 +144,7 @@ async def test_toplist_galleries_params_and_period(tmp_path, monkeypatch):
 
     info = await service.toplist_galleries(period="month", page=2)
     assert seen == [
-        ("https://e-hentai.org/toplist.php", {"tl": "13", "p": "2", "inline_set": "dm_e"})
+        ("https://e-hentai.org/toplist.php", {"tl": "13", "p": "1", "inline_set": "dm_e"})
     ]
     assert len(info.galleries) == 1
 

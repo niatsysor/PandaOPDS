@@ -195,7 +195,7 @@ async def gallery_feed(
         q = f"&query={quote(query)}" if query else ""
         next_href = builder.href(f"/opds/v1.2/gallery?next={info.next_gid}{q}")
 
-    title = _LIST_TITLES.get(query, "Latest") if query else "Latest"
+    title = _LIST_TITLES.get(query, "Search") if query else "Latest"
     title = f"E-Hentai: {title}"
 
     content = builder.gallery_feed(
