@@ -123,7 +123,7 @@
 | `identifier` | string | `urn:ehentai:gallery:{gid}:{token}` | 恒有 |
 | `modified` | string | 上传时间 ISO8601（UTC） | 恒有 |
 | `authors` | [ {`name`} ] | 作者（从标题 `[Author]` 括号解析，见 §3.6）；上传者本人见详情文档 `extensions.uploader` | 非空时 |
-| `language` | [string] | 语言（gdata language 标签，默认 `Japanese`） | 非空时 |
+| `language` | [string] | 语言（**BCP 47 / RFC 5646 码**，如 `zh`/`ja`/`zh-Hans`；由 EH `language:` 标签映射，未知与标记伪标签不输出） | 非空时 |
 | `published` | string | = `modified`（上传时间） | 恒有 |
 | `description` | string | **当前不输出**（预留字段；客户端如需描述，可自行拼接 `language`/`numberOfPages`/`authors`/`extensions.rating`/`extensions.sizeBytes`） | — |
 | `subject` | [string] | 拍平标签 `ns:key` 数组（Komga 风格，**不含分类**，去重保序） | 有标签时 |
@@ -201,7 +201,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
     "identifier": "urn:ehentai:gallery:4113236:73634e0e9a",
     "modified": "2025-08-11T08:13:20Z",
     "authors": [{ "name": "leopoldo" }],
-    "language": ["chinese"],
+    "language": ["zh"],
     "published": "2025-08-11T08:13:20Z",
     "subject": ["language:chinese", "female:netorare", "parody:zenless zone zero"],
     "numberOfPages": 42,

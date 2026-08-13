@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .languages import map_language
+
 
 @dataclass(frozen=True)
 class GalleryUrl:
@@ -116,11 +118,16 @@ class GalleryMetadata:
 
     @property
     def language(self) -> str:
-        tags = self.tags.get("language") or []
-        for tag in tags:
-            if tag.key != "translated":
-                return tag.key
-        return "Japanese"
+        """First language tag mapped to BCP 47 (RFC 5646); "" when none maps.
+
+        Marker pseudo-tags and unknown keys are dropped — the raw tag text
+        stays in the detail document's `subject`.
+        """
+        for tag in self.tags.get("language") or []:
+            mapped = map_language(tag.key)
+            if mapped:
+                return mapped
+        return ""
 
     @property
     def size_human(self) -> str:
@@ -200,7 +207,7 @@ class DetailPageInfo:
     rating: float = 0.0      # #rating_image.ir sprite
     uploader: str = ""       # #gdn > a
     publish_time: str = ""   # #gdd Posted row
-    language: str = ""       # #gdd Language row (normalised lowercase)
+    language: str = ""       # #gdd Language row (mapped to BCP 47, RFC 5646)
     filesize_text: str = ""  # #gdd File Size row (e.g. "189.3 MiB")
     torrent_count: int = 0   # #gd5 torrent link count
     expunged: bool = False   # any #gdd value contains "Expunged"

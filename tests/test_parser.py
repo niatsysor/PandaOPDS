@@ -260,11 +260,28 @@ def test_parse_gdata_response():
     assert m.filecount == 66
     assert m.filesize == 12345678
     assert m.posted == 1700000000
-    assert m.language == "english"
+    assert m.language == "en"
     assert m.expunged is False
     assert m.tags["artist"][0].key == "someone"
     # tag without namespace goes to "temp"
     assert m.tags["temp"][0].key == "tagless"
+
+
+def test_language_mapping_to_bcp47():
+    """EH language tags map to BCP 47 (RFC 5646); markers/unknowns dropped."""
+    from app.eh.languages import map_language
+
+    assert map_language("chinese") == "zh"
+    assert map_language("chinese (simplified)") == "zh-Hans"
+    assert map_language("chinese (traditional)") == "zh-Hant"
+    assert map_language("japanese") == "ja"
+    assert map_language("english") == "en"
+    assert map_language("Korean") == "ko"  # case-insensitive
+    assert map_language("translated") is None   # marker pseudo-tag
+    assert map_language("rewrite") is None      # marker pseudo-tag
+    assert map_language("raw") is None          # marker pseudo-tag
+    assert map_language("klingon") is None      # unknown → dropped
+    assert map_language("") is None
 
 
 def test_parse_gdata_response_empty_raises():
@@ -429,7 +446,7 @@ def test_parse_list_page_extended_extra_fields():
     # `background-position:0px -21px` → 5 - 0 - 0.5 = 4.5
     assert g1.rating == 4.5
     assert g1.publish_time == "2026-08-12 00:00"
-    assert g1.language == "chinese"  # from the language:chinese tag
+    assert g1.language == "zh"  # language:chinese → BCP 47 zh
     # row without a posted element / rating sprite / tags → field defaults
     assert g2.rating == 0.0
     assert g2.publish_time == ""
@@ -559,7 +576,7 @@ def test_parse_detail_page_metadata():
     assert info.rating == 2.5  # -32px -21px → 5 - 2 - 0.5
     assert info.uploader == "uploader1"
     assert info.publish_time == "2026-08-12 13:11"
-    assert info.language == "chinese"  # "Chinese TR" → first word, lowercase
+    assert info.language == "zh"  # "Chinese TR" → mapped to BCP 47 zh
     assert info.filesize_text == "12.34 MB"
     assert info.image_count == 893
     assert info.torrent_count == 2

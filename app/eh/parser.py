@@ -15,6 +15,7 @@ from typing import Any
 from lxml import html
 
 from .exceptions import ParseError
+from .languages import map_language
 from .models import (
     DetailPageInfo,
     GalleryListItem,
@@ -214,10 +215,17 @@ def _parse_list_publish_time(row: Any, view: str) -> str:
 
 
 def _list_language(tags: list[GalleryTag]) -> str:
-    """First non-translated language tag (mirrors GalleryMetadata.language)."""
+    """First language tag mapped to BCP 47 (RFC 5646); "" when none maps.
+
+    Marker pseudo-tags (translated/rewrite/raw) and unknown keys are
+    dropped — the raw tag text stays in the detail document's `subject`.
+    Mirrors GalleryMetadata.language (same map, same fallback).
+    """
     for t in tags:
-        if t.namespace == "language" and t.key != "translated":
-            return t.key
+        if t.namespace == "language":
+            mapped = map_language(t.key)
+            if mapped:
+                return mapped
     return ""
 
 
@@ -304,6 +312,19 @@ def _parse_torrent_count(doc: Any) -> int:
     return int(m.group(1)) if m else 0
 
 
+def _detail_language_key(raw: str) -> str:
+    """Normalize the #gdd Language row value to an EH language key.
+
+    The row carries the translated marker in both spacings — "Chinese \xa0TR"
+    (real pages, non-breaking space) and "Chinese TR" (test HTML). ``re``
+    treats \xa0 as whitespace in Python 3, so the marker suffix always
+    matches: both → "chinese"; "Chinese (Simplified) TR" →
+    "chinese (simplified)".
+    """
+    text = re.sub(r"\s+TR\s*$", "", raw or "", flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
 def _parse_detail_metadata(doc: Any) -> dict:
     """Scrape gallery metadata from the detail page (JHenTai-aligned).
 
@@ -318,9 +339,8 @@ def _parse_detail_metadata(doc: Any) -> dict:
     m = _URL_RE.search(cover_style)
     if m:
         cover_url = m.group(1)
-    language = gdd.get("Language", "")
-    if language:
-        language = language.split()[0].lower()  # "Chinese \xa0TR" → "chinese"
+    language = _detail_language_key(gdd.get("Language", ""))
+    language = map_language(language) or ""
     return {
         "title": _text(_first(doc, "#gn")),
         "title_jpn": _text(_first(doc, "#gj")),

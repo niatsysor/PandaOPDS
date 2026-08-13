@@ -639,7 +639,7 @@ def _detail(gid: int, token: str = "tok1") -> "DetailPageInfo":
         rating=4.5,
         uploader="up1",
         publish_time="2026-08-12 13:11",
-        language="chinese",
+        language="zh",
         filesize_text="12.34 MB",
         torrent_count=1,
     )
@@ -696,7 +696,7 @@ async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
     doc = r.json()
     md = doc["publications"][0]["metadata"]
     assert md["title"] == "Gallery 1"
-    assert md["language"] == ["chinese"]
+    assert md["language"] == ["zh"]
     assert md["numberOfPages"] == 42
     assert md["published"] == "2026-08-12T13:11:00Z"
     ext = md["extensions"]
