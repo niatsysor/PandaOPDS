@@ -79,7 +79,12 @@ Content-Type: application/json
 ```
 - 返回 `gmetadata` 数组：`gid, token, title, title_jpn, category, thumb, rating, tags, filecount, filesize, posted, uploader, torrentcount, expunged`。
 - **每请求最多 25 个 gid**。`filecount` 即 OPDS 的 `pse:count`。
-- 列表页拿到 gid/token 后应批量回填元数据，避免逐条 HTML 解析。
+
+### gdata 调用时机（传统爬虫模式，浏览零 ehapi）
+
+浏览阶段（列表/首页/toplist feed）**禁止调用 gdata**：条目完全由列表页 HTML 解析数据渲染（`GalleryListItem`：标题/分类/封面/页数/评分/发布时间/语言/全量标签）。只有客户端打开**详情文档**（v1.2 `/chapters`、v2.0 `/gallery/{gid}/{token}`）时才调用 `get_metadata`（gdata），且结果缓存 `METADATA_TTL_SECONDS`（默认 10min）。这是服务端防 ehapi 被浏览行为大量消耗的核心约束：**API 用量只与进详情成正比**。
+
+缩略图 `/image/{gid}/{token}/thumb` 同样不依赖 gdata：优先命中列表解析时写入的 cover 内存缓存，冷未命中回退详情页第 0 页第一个缩略图（1 次 HTML 请求服务 20 个 `/stream`）。
 
 ### 页面 URL 获取（无 API 替代，必须抓详情页）
 
@@ -115,8 +120,9 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 | 层 | 介质 | TTL | 说明 |
 |---|---|---|---|
-| 列表页解析结果（search/popular/watched/favorites/toplist） | 内存 | 10min | 首页/展示区块高频命中，避免重复抓列表页（`LIST_CACHE_TTL_SECONDS`） |
-| 图库元数据（gdata 结果） | 内存 | 1h | ~1-2KB/条 |
+| 列表页解析结果（search/popular/watched/favorites/toplist） | 内存 | 10min | 首页/展示区块高频命中，避免重复抓列表页（`LIST_CACHE_TTL_SECONDS`）；解析时顺带写入 cover 缓存 |
+| cover URL（列表页封面） | 内存 | 1h | 缩略图代理零 ehapi 的依赖（`cover:{gid}:{token}`，TTL 同页面 URL 映射） |
+| 图库元数据（gdata 结果） | 内存 | 10min | 仅详情文档触发（`METADATA_TTL_SECONDS`），~1-2KB/条 |
 | 页面 URL 映射（/s/ 列表） | 内存 | 1h | 避免重复翻页 |
 | 图片字节 | 磁盘 LRU | 7 天 | 默认 4GB（环境变量 `CACHE_DIR`/`CACHE_MAX_GB` 可调），可关 |
 
@@ -190,13 +196,14 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 ### OPDS 2.0 publication JSON 模板（`app/opds2/feed.py`）
 
-OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numberOfItems`（OPDS 2.0 标准属性）表达；页码基数不再传输（默认 1-based，与 LANraragi/Kasane 一致，`PSE_PAGE_BASE=0` 部署由自研客户端带外约定同步）。
+OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numberOfItems`（OPDS 2.0 标准属性）表达；页码基数不再传输（默认 1-based，与 LANraragi/Kasane 一致，`PSE_PAGE_BASE=0` 部署由自研客户端带外约定同步）。封面/缩略图按 OPDS 2.0 §2.3 放入顶层 `images` 集合——thumbnail link rel 是 OPDS 1.x 的 links 做法，v2.0 **不输出**（v1.2 Atom 仍用 link rel）。`images` 恒有（缩略图代理零 ehapi，不依赖 gdata）。
 
 **字段分层约定（本项目核心）**：
 
 - **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，含全部 `ns:key` 标签，不含分类）。
 - **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`tags`（完整标签：`namespace`/`key` + 仅非常规时输出的 `status`（`skepticism`/`incorrect`）+ 仅高亮标签输出的 `style`（`color`/`borderColor`/`background`，来自上游 HTML inline style，`!important` 已剥离））。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
-- 标签高亮数据来源：列表 feed 用列表页解析的高亮标签子集（布局相关：compact/extended 全量、thumbnail 仅高亮、minimal 无）覆盖 gdata 标签；详情文档用详情页 `#taglist`（完整 + 状态 + 样式，详情页缓存 1h）。
+- **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`tags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（gdata）。自研客户端必须按字段缺失容忍，完整元数据以详情文档为准。
+- 标签高亮数据来源：列表 feed 直接用列表页解析的全量标签（布局固定 extended：全量 + 状态 + 高亮 style）；详情文档用详情页 `#taglist`（完整 + 状态 + 样式，详情页缓存 1h）覆盖 gdata 标签。
 
 ```json
 {
@@ -222,8 +229,10 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
                             "background": "radial-gradient(#048751,#24A771)"}}]
     }
   },
+  "images": [
+    {"href": "/image/{gid}/{token}/thumb", "type": "image/jpeg"}
+  ],
   "links": [
-    {"rel": "http://opds-spec.org/image/thumbnail", "href": "/image/{gid}/{token}/thumb", "type": "image/jpeg"},
     {"rel": "http://opds-spec.org/acquisition", "href": "/opds/v2.0/gallery/{gid}/{token}",
      "type": "application/opds+json;profile=acquisition",
      "properties": {"numberOfItems": {filecount}}},
@@ -250,14 +259,15 @@ FastAPI (uvicorn) 单进程
 ├─ Feed 层：OPDS XML/JSON 生成（v1.2 Atom + v2.0 JSON + OpenSearch）
 ├─ 代理层：图片/缩略图流式转发 + 磁盘缓存
 ├─ 数据层：gdata API + 列表/详情/图片页 HTML 解析
-├─ 缓存层：内存（元数据/页面URL，1h）+ 磁盘（图片，7d）
+├─ 缓存层：内存（元数据/cover/页面URL）+ 磁盘（图片，7d）
 └─ 限流层：asyncio.Semaphore + 请求间隔；banned/509/exceedLimit 检测与熔断
 ```
 
 一次图库完整生命周期：
-1. v1.2 章节 feed / v2.0 详情文档请求 → 缓存未命中 → `gdata` 拿 `filecount`/标题/标签 → 生成条目（v1.2 `pse:count` / v2.0 `numberOfItems` = filecount）
-2. `/stream/page/{n}` 请求 → 页面 URL 缓存未命中 → 抓详情页 `?p={(n-1)//20}`（1 请求服务 20 页）→ 取第 n 个 `/s/` URL → 抓 `/s/` 页解析 `#img` src → 抓图片字节 → 磁盘缓存 → 流式返回（n 为 1-based 时）
-3. 触发 509 → 429；banned/exceedLimit → 全局熔断
+1. **浏览阶段**（列表/首页/toplist feed）：只抓列表页 HTML → `parse_list_page` 渲染条目（零 ehapi），顺带写入 cover 缓存
+2. **详情文档请求**（v1.2 `/chapters` / v2.0 `/gallery/{gid}/{token}`）→ 元数据缓存未命中 → `gdata` 拿 `filecount`/标题/标签/评分 → 生成条目（v1.2 `pse:count` / v2.0 `numberOfItems` = filecount；缓存 `METADATA_TTL_SECONDS` 默认 10min）
+3. `/stream/page/{n}` 请求 → 页面 URL 缓存未命中 → 抓详情页 `?p={(n-1)//20}`（1 请求服务 20 页）→ 取第 n 个 `/s/` URL → 抓 `/s/` 页解析 `#img` src → 抓图片字节 → 磁盘缓存 → 流式返回（n 为 1-based 时）
+4. 触发 509 → 429；banned/exceedLimit → 全局熔断
 
 ## 开发命令
 

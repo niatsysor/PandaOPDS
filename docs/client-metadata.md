@@ -169,11 +169,29 @@
 
 | rel | href | type | 附加 |
 |---|---|---|---|
-| `http://opds-spec.org/image/thumbnail` | `/image/{gid}/{token}/thumb` | `image/jpeg` | 封面（302 到上游或磁盘缓存字节） |
 | `http://opds-spec.org/acquisition` | `/opds/v2.0/gallery/{gid}/{token}` | `application/opds+json;profile=acquisition` | `properties.numberOfItems` = 页数（>0 时） |
 | `http://vaemendis.net/opds-pse/stream` | `/stream/{gid}/{token}/page/{pageNumber}` | `image/jpeg` | `properties.numberOfItems` = 页数；`{pageNumber}` 占位符由客户端替换；页数>0 时 |
 
-### 3.5 完整 publication 示例
+> **封面不在 `links` 中**：thumbnail link rel（`http://opds-spec.org/image/thumbnail`）是 OPDS 1.x 的做法，v2.0 按规范 §2.3 放入 `images[]` 集合（见 §3.5）。v1.2（Atom）仍用 link rel。
+
+### 3.5 封面（`images[]` 集合）
+
+OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**恒有**（缩略图代理零 ehapi，不依赖 gdata）：
+
+```json
+"images": [
+  { "href": "/image/{gid}/{token}/thumb", "type": "image/jpeg" }
+]
+```
+
+| 字段 | 说明 |
+|---|---|
+| `href` | 缩略图代理（302 到上游或磁盘缓存字节） |
+| `type` | `image/jpeg` |
+
+当前仅输出一个尺寸；响应式多尺寸（`width`/`height` 变体）预留，未来有尺寸数据时再加。
+
+### 3.6 完整 publication 示例
 
 ```json
 {
@@ -203,12 +221,14 @@
     }
   },
   "links": [
-    { "rel": "http://opds-spec.org/image/thumbnail", "href": "/image/4113236/73634e0e9a/thumb", "type": "image/jpeg" },
     { "rel": "http://opds-spec.org/acquisition", "href": "/opds/v2.0/gallery/4113236/73634e0e9a",
       "type": "application/opds+json;profile=acquisition", "title": "[leopoldo] Nejire [AI Generated]",
       "properties": { "numberOfItems": 42 } },
     { "rel": "http://vaemendis.net/opds-pse/stream", "href": "/stream/4113236/73634e0e9a/page/{pageNumber}",
       "type": "image/jpeg", "properties": { "numberOfItems": 42 } }
+  ],
+  "images": [
+    { "href": "/image/4113236/73634e0e9a/thumb", "type": "image/jpeg" }
   ]
 }
 ```
@@ -249,7 +269,7 @@
 | `next` | 下一页（gallery 用 lastGid；toplist 用 page） |
 | `subsection` | 导航项 → 采集文档 |
 | `http://opds-spec.org/acquisition` | 获取详情 |
-| `http://opds-spec.org/image/thumbnail` | 封面 |
+| `http://opds-spec.org/image/thumbnail` | 封面（**仅 v1.2 Atom**；v2.0 走 `images[]` 集合，§3.5） |
 | `http://vaemendis.net/opds-pse/stream` | PSE 串流（`{pageNumber}` 占位符） |
 
 ---

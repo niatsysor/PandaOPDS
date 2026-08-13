@@ -29,7 +29,6 @@ SEARCH_TEMPLATE = "/opds/v2.0/gallery?query={searchTerms}"
 REL_NEXT = "next"
 REL_SUBSECTION = "subsection"
 REL_ACQUISITION = "http://opds-spec.org/acquisition"
-REL_THUMB = "http://opds-spec.org/image/thumbnail"
 REL_STREAM = "http://vaemendis.net/opds-pse/stream"
 
 
@@ -244,11 +243,6 @@ class Opds2Builder:
             page_props = {"numberOfItems": page_count}
         links = [
             self._link(
-                REL_THUMB,
-                self.href(f"/image/{gid}/{token}/thumb"),
-                MIME_THUMB,
-            ),
-            self._link(
                 REL_ACQUISITION,
                 self.href(f"/opds/v2.0/gallery/{gid}/{token}"),
                 MIME_ACQ,
@@ -265,4 +259,13 @@ class Opds2Builder:
                     properties=page_props,
                 )
             )
-        return {"metadata": md, "links": links}
+        # Cover/thumbnail goes in the `images` collection (OPDS 2.0 §2.3):
+        # visual representations live there, not in `links` (the thumbnail
+        # link relation is the OPDS 1.x approach; v1.2 Atom still uses it).
+        images = [
+            {
+                "href": self.href(f"/image/{gid}/{token}/thumb"),
+                "type": MIME_THUMB,
+            }
+        ]
+        return {"metadata": md, "links": links, "images": images}

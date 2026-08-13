@@ -8,7 +8,6 @@ from app.opds2.feed import (
     MIME_NAV,
     REL_ACQUISITION,
     REL_STREAM,
-    REL_THUMB,
     Opds2Builder,
     _iso,
 )
@@ -128,8 +127,11 @@ def test_publication_metadata_and_links():
         "radial-gradient(#048751,#24A771)"
     )
 
+    # Cover lives in the `images` collection (OPDS 2.0 §2.3), not in `links`:
+    # the thumbnail link relation is the OPDS 1.x approach.
+    assert pub["images"] == [{"href": "/image/123/abc/thumb", "type": "image/jpeg"}]
     links = {l["rel"]: l for l in pub["links"]}
-    assert links[REL_THUMB]["href"] == "/image/123/abc/thumb"
+    assert "http://opds-spec.org/image/thumbnail" not in links
     acq = links[REL_ACQUISITION]
     assert acq["href"] == "/opds/v2.0/gallery/123/abc"
     assert acq["type"] == MIME_ACQ
