@@ -188,6 +188,11 @@ class EHClient:
         if host not in (self.settings.site_host, self.settings.ehentai_host):
             return
 
+        if response.status_code == 403:
+            raise CloudflareError(
+                "403 from E-Hentai host (Cloudflare challenge)"
+            )
+
         body = response.text
         if body == "":
             raise CookieInvalidError("empty response body (login required?)")
@@ -249,6 +254,22 @@ class EHClient:
                     )
                     await asyncio.sleep(min(0.5 * attempt, 3.0))
                     continue
+                # exhausted: normalize to EHException so the service layer and
+                # the global handler see one error family (502), never a raw
+                # httpx exception escaping to the client as an opaque 500.
+                raise EHException(
+                    f"upstream transport error after {attempt} attempts: {exc}"
+                ) from exc
+            except EHException as exc:
+                # retryable E-Hentai failures (fatal error page / Cloudflare
+                # 403): same backoff loop as network errors, fixed attempts.
+                if exc.retryable and attempt <= self.retries:
+                    logger.warning(
+                        "request %s %s failed (%s), retry %d/%d",
+                        method, url, type(exc).__name__, attempt, self.retries,
+                    )
+                    await asyncio.sleep(min(0.5 * attempt, 3.0))
+                    continue
                 raise
 
     # -- public helpers ---------------------------------------------------
@@ -301,10 +322,29 @@ class EHClient:
                         raise GalleryDeletedError("image not found (404)")
                     if resp.status_code == 403:
                         raise CloudflareError("403 from image host")
+                    if resp.status_code >= 400:
+                        # CDN 5xx (or any other error page) must not be
+                        # buffered and disk-cached as if it were image bytes.
+                        raise EHServerError(
+                            f"image host returned HTTP {resp.status_code}",
+                            retryable=True,
+                        )
                     chunks = [c async for c in resp.aiter_bytes()]
                     return b"".join(chunks)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 if attempt <= self.retries:
+                    logger.warning(
+                        "image fetch %s failed (%s), retry %d/%d",
+                        url, type(exc).__name__, attempt, self.retries,
+                    )
+                    await asyncio.sleep(min(0.5 * attempt, 3.0))
+                    continue
+                raise EHException(
+                    f"image fetch failed after {attempt} attempts: {exc}"
+                ) from exc
+            except EHException as exc:
+                # retryable upstream image failures (CDN 5xx / Cloudflare)
+                if exc.retryable and attempt <= self.retries:
                     logger.warning(
                         "image fetch %s failed (%s), retry %d/%d",
                         url, type(exc).__name__, attempt, self.retries,

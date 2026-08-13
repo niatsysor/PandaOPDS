@@ -57,6 +57,13 @@ class Settings:
     # Default 1 for client compatibility; set PSE_PAGE_BASE=0 for spec-strict.
     pse_page_base: int = 1
 
+    # --- Circuit breaker cooldowns (graded by recovery horizon) ---
+    # An IP ban lasts hours: long cooldown means few (safe) probe attempts.
+    # The image quota rolls over within minutes: short cooldown means fast
+    # recovery once the quota frees up. Override via env vars.
+    banned_cooldown_seconds: float = 1800.0
+    exceed_cooldown_seconds: float = 300.0
+
     # --- Cache ---
     cache_dir: Path = field(default_factory=lambda: Path("./cache"))
     cache_max_gb: float = 4.0
@@ -260,6 +267,8 @@ def load_settings() -> Settings:
         metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 600),
         page_url_ttl_seconds=_int(os.getenv("PAGE_URL_TTL_SECONDS"), 3600),
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
+        banned_cooldown_seconds=_float(os.getenv("BANNED_COOLDOWN_SECONDS"), 1800.0),
+        exceed_cooldown_seconds=_float(os.getenv("EXCEED_COOLDOWN_SECONDS"), 300.0),
         tag_status_filter=(
             os.getenv("TAG_STATUS_FILTER", "balanced").strip().lower() or "balanced"
         ),

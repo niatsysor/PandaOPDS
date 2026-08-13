@@ -29,7 +29,8 @@ def _service(request: Request) -> EHService:
 @router.get("/stream/{gid}/{token}/page/{page}")
 async def stream_page(request: Request, gid: int, token: str, page: int):
     service = _service(request)
-    base = request.app.state.settings.pse_page_base
+    settings = request.app.state.settings
+    base = settings.pse_page_base
     if page < base:
         raise HTTPException(
             status_code=400,
@@ -38,7 +39,13 @@ async def stream_page(request: Request, gid: int, token: str, page: int):
     try:
         data, mime = await service.get_image(gid, token, page)
     except ExceedLimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+        # image quota exhausted: tell the client how long to back off (the
+        # same horizon the circuit breaker uses for exceedLimit trips)
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(int(settings.exceed_cooldown_seconds))},
+        ) from exc
     return Response(
         content=data,
         media_type=mime,

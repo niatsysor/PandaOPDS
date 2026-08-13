@@ -34,31 +34,42 @@ class CircuitOpenError(RuntimeError):
 
 
 class CircuitBreaker:
-    """Simple open/closed breaker with a cooldown."""
+    """Simple open/closed breaker with a cooldown.
+
+    The cooldown can be overridden per trip (e.g. longer for IP bans, shorter
+    for image-quota limits); when not overridden the constructor default
+    applies.
+    """
 
     def __init__(self, cooldown_seconds: float = 600.0):
         self.cooldown = cooldown_seconds
         self._state = "closed"  # "closed" | "open"
         self._reason: str | None = None
         self._opened_at: float | None = None
+        self._cooldown: float = cooldown_seconds
         self._lock = asyncio.Lock()
 
     @property
     def is_open(self) -> bool:
         return self._state == "open"
 
-    async def trip(self, reason: str) -> None:
+    async def trip(self, reason: str, cooldown: float | None = None) -> None:
         async with self._lock:
             self._state = "open"
             self._reason = reason
             self._opened_at = time.monotonic()
-            logger.error("CIRCUIT BREAKER TRIPPED: %s", reason)
+            self._cooldown = cooldown if cooldown is not None else self.cooldown
+            logger.error(
+                "CIRCUIT BREAKER TRIPPED: %s (cooldown %.0fs)",
+                reason, self._cooldown,
+            )
 
     async def reset(self) -> None:
         async with self._lock:
             self._state = "closed"
             self._reason = None
             self._opened_at = None
+            self._cooldown = self.cooldown
             logger.info("circuit breaker reset")
 
     async def check(self) -> None:
@@ -68,15 +79,16 @@ class CircuitBreaker:
                 return
             assert self._opened_at is not None
             elapsed = time.monotonic() - self._opened_at
-            if elapsed >= self.cooldown:
+            if elapsed >= self._cooldown:
                 self._state = "closed"
                 self._reason = None
                 self._opened_at = None
+                self._cooldown = self.cooldown
                 logger.info("circuit breaker cooldown expired, closed again")
                 return
             raise CircuitOpenError(
                 self._reason or "unknown",
-                retry_after=max(0.0, self.cooldown - elapsed),
+                retry_after=max(0.0, self._cooldown - elapsed),
             )
 
 
@@ -134,5 +146,5 @@ class Throttle:
                 await asyncio.sleep(delay)
             self._last_html_at = time.monotonic()
 
-    async def trip(self, reason: str) -> None:
-        await self.circuit.trip(reason)
+    async def trip(self, reason: str, cooldown: float | None = None) -> None:
+        await self.circuit.trip(reason, cooldown=cooldown)

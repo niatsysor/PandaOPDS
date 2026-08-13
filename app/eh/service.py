@@ -15,7 +15,12 @@ from ..cache.memory import MemoryCache
 from ..config import Settings
 from ..throttle.limiter import KIND_API, KIND_HTML, KIND_IMAGE, Throttle
 from .client import EHClient
-from .exceptions import EHException, ExceedLimitError, PageNotFoundError
+from .exceptions import (
+    BannedError,
+    EHException,
+    ExceedLimitError,
+    PageNotFoundError,
+)
 from .models import (
     DetailPageInfo,
     GalleryMetadata,
@@ -73,11 +78,22 @@ class EHService:
         return await self.mem.get_or_set(key, factory, ttl)
 
     async def _trip_if_fatal(self, exc: EHException) -> None:
-        """Trip the circuit breaker for hard failures (banned / image limit)."""
-        from .exceptions import BannedError, ExceedLimitError as _E
+        """Trip the circuit breaker for hard failures (banned / image limit).
 
-        if isinstance(exc, (BannedError, _E)):
-            await self.throttle.trip(f"{type(exc).__name__}: {exc}")
+        Cooldowns are graded by recovery horizon: an IP ban lasts hours
+        (long cooldown, few probe attempts), while the image quota rolls
+        over within minutes (short cooldown, fast recovery).
+        """
+        if isinstance(exc, BannedError):
+            await self.throttle.trip(
+                f"{type(exc).__name__}: {exc}",
+                cooldown=self.settings.banned_cooldown_seconds,
+            )
+        elif isinstance(exc, ExceedLimitError):
+            await self.throttle.trip(
+                f"{type(exc).__name__}: {exc}",
+                cooldown=self.settings.exceed_cooldown_seconds,
+            )
 
     # -- list pages --------------------------------------------------------
 
@@ -321,13 +337,21 @@ class EHService:
 
         info = await self.resolve_image_page(gid, token, page_no_1)
         if info.is_509:
+            # 509 = hourly image quota exhausted. Drop the cached page-URL
+            # mapping so a retry after the quota rolls over re-resolves
+            # instead of serving a stale 429 for up to the 1h TTL.
+            await self.mem.delete(self._mem_key("imgpage", gid, token, page_no_1))
             raise ExceedLimitError("image limit exceeded (509 placeholder)")
 
         referer = f"{self.settings.http_origin}/s/{gid}-{page_no_1}"
         try:
             data = await self._fetch_image_bytes(info.image_url, referer)
-        except EHException:
-            # retry once with the nl() reload key if we have one
+        except EHException as exc:
+            # retry once with the nl() reload key if we have one. Hard
+            # failures (banned / image limit) are excluded: the breaker
+            # already tripped and the reload key cannot change the outcome.
+            if isinstance(exc, (BannedError, ExceedLimitError)):
+                raise
             if info.reload_key:
                 retry_url = f"{info.image_url}?nl={info.reload_key}"
                 data = await self._fetch_image_bytes(retry_url, referer)

@@ -34,6 +34,35 @@ async def test_circuit_breaker_trip_and_cooldown():
 
 
 @pytest.mark.asyncio
+async def test_circuit_breaker_trip_with_cooldown_override():
+    cb = CircuitBreaker(cooldown_seconds=600)
+    # per-trip override wins over the constructor default
+    await cb.trip("exceedLimit", cooldown=300)
+    with pytest.raises(CircuitOpenError) as exc_info:
+        await cb.check()
+    assert exc_info.value.retry_after <= 300
+    # default (600) applies when no override is given
+    await cb.reset()
+    await cb.trip("banned")
+    with pytest.raises(CircuitOpenError) as exc_info:
+        await cb.check()
+    assert exc_info.value.retry_after > 300
+    await cb.reset()
+    assert not cb.is_open
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_expiry_uses_trip_cooldown():
+    cb = CircuitBreaker(cooldown_seconds=600)
+    await cb.trip("exceedLimit", cooldown=0.1)
+    with pytest.raises(CircuitOpenError):
+        await cb.check()
+    await asyncio.sleep(0.15)
+    await cb.check()  # expires per the trip cooldown, not the default
+    assert not cb.is_open
+
+
+@pytest.mark.asyncio
 async def test_circuit_breaker_reset():
     cb = CircuitBreaker(cooldown_seconds=60)
     await cb.trip("exceedLimit")

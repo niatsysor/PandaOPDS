@@ -5,7 +5,12 @@ long galleries (1000+ pages), out-of-range pages, 509 -> 429 mapping.
 import pytest
 
 from app.config import Settings
-from app.eh.exceptions import ExceedLimitError, PageNotFoundError
+from app.eh.exceptions import (
+    BannedError,
+    EHServerError,
+    ExceedLimitError,
+    PageNotFoundError,
+)
 from app.eh.models import DetailPageInfo
 from app.eh.parser import (
     parse_detail_page,
@@ -227,4 +232,65 @@ async def test_509_raises_exceed_limit(tmp_path):
     svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClient509())
     with pytest.raises(ExceedLimitError):
         await svc.get_image(1, "tok", 1)
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_509_drops_imgpage_cache(tmp_path):
+    """A 509 hit evicts the cached page mapping so a post-quota retry
+    re-resolves instead of serving a stale 429 for up to 1h."""
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClient509())
+    with pytest.raises(ExceedLimitError):
+        await svc.get_image(1, "tok", 1)
+    # the failed 509 result must not stay cached
+    assert await svc.mem.get("imgpage:1:tok:1") is None
+    await svc.close()
+
+
+class _FakeClientNlRetry(_FakeClient):
+    """First image fetch fails with a transient EHServerError; the second
+    (nl reload-key) attempt succeeds."""
+
+    def __init__(self):
+        super().__init__()
+        self.image_calls = 0
+        self.urls: list[str] = []
+
+    async def fetch_image_bytes(self, url, referer=None):
+        self.image_calls += 1
+        self.urls.append(url)
+        if self.image_calls == 1:
+            raise EHServerError("transient image host failure")
+        return b"\xff\xd8\xff\xe0 fakejpeg"
+
+
+@pytest.mark.asyncio
+async def test_nl_reload_retry_on_transient_image_failure(tmp_path):
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClientNlRetry())
+    data, mime = await svc.get_image(1, "tok", 1)
+    assert mime == "image/jpeg"
+    assert svc.client.image_calls == 2
+    # second attempt rides the nl() reload key parsed from the /s/ page
+    assert svc.client.urls[1] == "https://ehgt.org/x/1.jpg?nl=rl1"
+    await svc.close()
+
+
+class _FakeClientBanned(_FakeClient):
+    """Image host reports a ban; must not trigger the nl reload-key retry."""
+
+    def __init__(self):
+        super().__init__()
+        self.image_calls = 0
+
+    async def fetch_image_bytes(self, url, referer=None):
+        self.image_calls += 1
+        raise BannedError("Your IP address has been banned")
+
+
+@pytest.mark.asyncio
+async def test_nl_retry_skipped_for_hard_failures(tmp_path):
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClientBanned())
+    with pytest.raises(BannedError):
+        await svc.get_image(1, "tok", 1)
+    assert svc.client.image_calls == 1  # no nl retry for banned
     await svc.close()

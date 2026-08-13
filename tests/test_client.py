@@ -8,6 +8,7 @@ from app.eh.client import EHClient
 from app.eh.exceptions import (
     BannedError,
     CookieInvalidError,
+    EHException,
     EHServerError,
     ExceedLimitError,
     GalleryDeletedError,
@@ -99,6 +100,85 @@ async def test_retry_on_transport_error_then_success():
     c = _client(handler)
     assert await c.get_html("/") == "ok"
     assert calls["n"] == 2
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_retryable_eh_server_error_retried_then_success():
+    """EHServerError (fatal error page) is retryable: retried with backoff."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                200, text="Page load has been aborted due to a fatal error"
+            )
+        return httpx.Response(200, text="ok")
+
+    c = _client(handler)
+    assert await c.get_html("/") == "ok"
+    assert calls["n"] == 2
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_403_retried_then_success():
+    """403 on an E-Hentai host raises CloudflareError which is retryable."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(403, text="challenge")
+        return httpx.Response(200, text="ok")
+
+    c = _client(handler)
+    assert await c.get_html("/") == "ok"
+    assert calls["n"] == 2
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_exhausted_wraps_transport_error():
+    """Exhausted transport retries surface as EHException (502), not a raw
+    httpx error that would escape to the client as an opaque 500."""
+    def handler(request):
+        raise httpx.ConnectError("boom")
+
+    c = _client(handler)
+    with pytest.raises(EHException):
+        await c.get_html("/")
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_image_cdn_5xx_retried_then_success():
+    """CDN 5xx raises retryable EHServerError; error-page bytes are never
+    returned as image data."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(502, text="<html>bad gateway</html>")
+        return httpx.Response(200, content=b"\xff\xd8\xffok")
+
+    c = _client(handler)
+    data = await c.fetch_image_bytes("https://ehgt.org/x.jpg")
+    assert calls["n"] == 2
+    assert data == b"\xff\xd8\xffok"
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_image_fetch_exhausted_wraps_transport_error():
+    def handler(request):
+        raise httpx.ConnectError("boom")
+
+    c = _client(handler)
+    with pytest.raises(EHException):
+        await c.fetch_image_bytes("https://ehgt.org/x.jpg")
     await c.close()
 
 

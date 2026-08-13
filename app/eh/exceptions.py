@@ -58,6 +58,11 @@ class CloudflareError(EHException):
 
     status_code = 503
 
+    def __init__(self, message: str = "403 from Cloudflare challenge"):
+        # 403s are transient (Cloudflare may lift the challenge); the client
+        # retries them with backoff instead of failing immediately.
+        super().__init__(message, retryable=True)
+
 
 class EHServerError(EHException):
     """E-Hentai internal error (fatal error page)."""
