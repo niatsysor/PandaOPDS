@@ -200,10 +200,12 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 
 **字段分层约定（本项目核心）**：
 
-- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，含全部 `ns:key` 标签，不含分类）。
-- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`tags`（完整标签：`namespace`/`key` + 仅非常规时输出的 `status`（`skepticism`/`incorrect`）+ 仅高亮标签输出的 `style`（`color`/`borderColor`/`background`，来自上游 HTML inline style，`!important` 已剥离））。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
-- **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`tags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（gdata）。自研客户端必须按字段缺失容忍，完整元数据以详情文档为准。
-- 标签高亮数据来源：列表 feed 直接用列表页解析的全量标签（布局固定 extended：全量 + 状态 + 高亮 style）；详情文档用详情页 `#taglist`（完整 + 状态 + 样式，详情页缓存 1h）覆盖 gdata 标签。
+- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，`ns:key`，不含分类）：详情文档含完整 taglist（经 status 过滤后的全部标签）；列表 feed 是子集（额外剔除 `language`/`artist`——language 已有独立字段，author 由客户端从文件名解析）。
+- **标签 status（社区可信度，全局过滤策略）**：EH 标签带 `gt`(confidence)/`gtl`(skepticism)/`gtw`(incorrect) class（列表页与详情页 `#taglist` 同构）。低于 `TAG_STATUS_FILTER` 等级（`balanced` 默认：confidence+skepticism；`strict`：仅 confidence；`off`：全部）的标签从 **subject 与 mytags 一并剔除**——拒绝模棱两可的标签进入目录。status **不传递给客户端**（服务端消费后即丢弃），客户端无法感知被过滤标签的存在。
+- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
+- **`extensions.mytags`（列表专属字段，详情不输出）**：仅含**带高亮 style 的标签**（经 status 过滤后），条目 = `namespace`/`key` + `style`（`color`/`borderColor`/`background`，来自列表页 inline style，`!important` 已剥离），**无 status**。语义 = "值得高亮展示的标签"，客户端用它查询高亮样式。详情文档不含 mytags（详情页 `#taglist` 本无高亮 style）——客户端展开详情时**合并**（subject 以详情完整版替换、mytags 保留列表条目继承高亮），勿整体替换重建。
+- **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`mytags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（gdata）。自研客户端必须按字段缺失容忍，完整元数据以详情文档为准（subject 亦以详情完整版为准）。
+- 标签高亮数据来源：列表 feed 的 `mytags` 来自列表页解析的高亮标签（布局固定 extended）；全量标签进 `subject`（列表精简 / 详情完整），二者皆经 `TAG_STATUS_FILTER` 统一过滤，保持子集关系。
 
 ```json
 {
@@ -223,10 +225,9 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
       "sizeBytes": {filesize},
       "expunged": {expunged},
       "category": "{category}",
-      "tags": [{"namespace": "{ns}", "key": "{key}",
-                  "status": "{skepticism|incorrect}",
-                  "style": {"color": "#f1f1f1", "borderColor": "#048751",
-                            "background": "radial-gradient(#048751,#24A771)"}}]
+      "mytags": [{"namespace": "{ns}", "key": "{key}",
+                   "style": {"color": "#f1f1f1", "borderColor": "#048751",
+                             "background": "radial-gradient(#048751,#24A771)"}}]
     }
   },
   "images": [

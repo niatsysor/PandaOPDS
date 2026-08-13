@@ -24,6 +24,9 @@ from .models import (
     GalleryThumbnail,
     GalleryUrl,
     ImagePageInfo,
+    TAG_STATUS_CONFIDENCE,
+    TAG_STATUS_INCORRECT,
+    TAG_STATUS_SKEPTICISM,
     TagStyle,
     tag_status_from_class,
 )
@@ -39,6 +42,29 @@ _509_URLS = {
     "https://ehgt.org/g/509.gif",
     "https://exhentai.org/img/509.gif",
 }
+
+# --- Tag status filter (global strategy) ---
+# E-Hentai tags carry a community-trust class (gt=confidence, gtl=skepticism,
+# gtw=incorrect). The configured level decides which statuses are considered
+# reliable enough to enter subject/mytags; the status itself is never
+# transmitted to clients (see AGENTS.md "字段分层约定").
+_TAG_STATUS_KEEP: dict[str, frozenset[str]] = {
+    "strict": frozenset({TAG_STATUS_CONFIDENCE}),
+    "balanced": frozenset({TAG_STATUS_CONFIDENCE, TAG_STATUS_SKEPTICISM}),
+    "off": frozenset({TAG_STATUS_CONFIDENCE, TAG_STATUS_SKEPTICISM, TAG_STATUS_INCORRECT}),
+}
+
+
+def apply_status_filter(tags: list[GalleryTag], level: str = "balanced") -> list[GalleryTag]:
+    """Drop tags below the configured community-trust level.
+
+    ``strict`` keeps confidence only; ``balanced`` (default) also keeps
+    skepticism; ``off`` keeps everything. Unknown levels fall back to
+    ``balanced``. Applied uniformly to list feeds and detail documents so
+    subject stays a subset relationship across both.
+    """
+    keep = _TAG_STATUS_KEEP.get(level, _TAG_STATUS_KEEP["balanced"])
+    return [t for t in tags if t.status in keep]
 
 # CSS containers for the four list views (JHenTai `_*GalleryPageDocument2...`)
 # tr-based selectors are descendant-style: real pages have no <tbody> and lxml

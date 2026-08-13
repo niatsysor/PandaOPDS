@@ -7,8 +7,9 @@ example/JHenTai/lib/src/utils/eh_spider_parser.dart.
 import pytest
 
 from app.eh.exceptions import ParseError
-from app.eh.models import ImagePageInfo
+from app.eh.models import GalleryTag, ImagePageInfo
 from app.eh.parser import (
+    apply_status_filter,
     parse_detail_page,
     parse_gdata_response,
     parse_image_page,
@@ -699,3 +700,63 @@ def test_title_parser_empty_author_bracket():
     clean, authors = parse_title_authors("[] Empty Bracket Title")
     assert clean == "Empty Bracket Title"
     assert authors == []
+
+
+# --------------------------------------------------------------------------
+# tag status filter (global strategy)
+# --------------------------------------------------------------------------
+
+def _tag(ns: str, key: str, status: str, style: bool = False) -> "GalleryTag":
+    from app.eh.models import TagStyle
+
+    return GalleryTag(
+        namespace=ns,
+        key=key,
+        status=status,
+        style=TagStyle(color="#fff") if style else None,
+    )
+
+
+def test_apply_status_filter_balanced_default():
+    """Default (balanced) keeps confidence + skepticism, drops incorrect."""
+    tags = [
+        _tag("female", "a", "confidence"),
+        _tag("male", "b", "skepticism"),
+        _tag("artist", "c", "incorrect"),
+    ]
+    out = apply_status_filter(tags)
+    assert [str(t) for t in out] == ["female:a", "male:b"]
+
+
+def test_apply_status_filter_strict():
+    tags = [
+        _tag("female", "a", "confidence"),
+        _tag("male", "b", "skepticism"),
+    ]
+    out = apply_status_filter(tags, "strict")
+    assert [str(t) for t in out] == ["female:a"]
+
+
+def test_apply_status_filter_off_keeps_all():
+    tags = [
+        _tag("female", "a", "confidence"),
+        _tag("male", "b", "incorrect"),
+    ]
+    out = apply_status_filter(tags, "off")
+    assert len(out) == 2
+
+
+def test_apply_status_filter_unknown_level_falls_back_to_balanced():
+    tags = [
+        _tag("female", "a", "confidence"),
+        _tag("male", "b", "incorrect"),
+    ]
+    out = apply_status_filter(tags, "bogus")
+    assert [str(t) for t in out] == ["female:a"]
+
+
+def test_apply_status_filter_does_not_mutate_input():
+    tags = [_tag("female", "a", "incorrect")]
+    out = apply_status_filter(tags)
+    assert out == []
+    assert len(tags) == 1

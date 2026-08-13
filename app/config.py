@@ -72,6 +72,16 @@ class Settings:
     # no longer configurable so browsing metadata never degrades.
     list_layout: str = "extended"
 
+    # --- Tag status filter (global strategy) ---
+    # E-Hentai tags carry a community-trust status (gt=confidence,
+    # gtl=skepticism, gtw=incorrect). Tags below the configured level are
+    # dropped from every feed (subject + mytags) so ambiguous tags never enter
+    # the catalog; the status itself is never transmitted to clients.
+    #   strict   -> confidence only
+    #   balanced -> confidence + skepticism (default)
+    #   off      -> keep everything
+    tag_status_filter: str = "balanced"
+
     # --- uconfig profile isolation ---
     # The service defaults to a dedicated E-Hentai settings profile named
     # "PandaOPDS" (created once, then switched to during ``establish_session``),
@@ -250,6 +260,9 @@ def load_settings() -> Settings:
         metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 600),
         page_url_ttl_seconds=_int(os.getenv("PAGE_URL_TTL_SECONDS"), 3600),
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
+        tag_status_filter=(
+            os.getenv("TAG_STATUS_FILTER", "balanced").strip().lower() or "balanced"
+        ),
         eh_profile=os.getenv("EH_PROFILE", "PandaOPDS").strip(),
         home_config_path=Path(os.getenv("HOME_CONFIG", "./config/home.toml")),
         facets=_facets(os.getenv("FACETS")),

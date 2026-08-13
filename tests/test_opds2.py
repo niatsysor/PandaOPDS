@@ -42,11 +42,10 @@ def _pub(builder: Opds2Builder, **kw) -> dict:
             "uploader": "uploader",
             "category": "Doujinshi",
             "sizeBytes": 12345,
-            "tags": [
+            "mytags": [
                 {
                     "namespace": "female",
                     "key": "netorare",
-                    "status": "confidence",
                     "style": {
                         "color": "#f1f1f1",
                         "borderColor": "#048751",
@@ -121,11 +120,13 @@ def test_publication_metadata_and_links():
     assert ext["uploader"] == "uploader"
     assert ext["category"] == "Doujinshi"
     assert ext["sizeBytes"] == 12345
-    assert ext["tags"][0]["namespace"] == "female"
-    assert ext["tags"][0]["key"] == "netorare"
-    assert ext["tags"][0]["style"]["background"] == (
+    assert ext["mytags"][0]["namespace"] == "female"
+    assert ext["mytags"][0]["key"] == "netorare"
+    assert ext["mytags"][0]["style"]["background"] == (
         "radial-gradient(#048751,#24A771)"
     )
+    # mytags entries never carry status (consumed server-side by the filter)
+    assert "status" not in ext["mytags"][0]
 
     # Cover lives in the `images` collection (OPDS 2.0 §2.3), not in `links`:
     # the thumbnail link relation is the OPDS 1.x approach.

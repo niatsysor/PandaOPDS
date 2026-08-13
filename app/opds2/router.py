@@ -18,7 +18,7 @@ from ..eh.models import (
     GalleryPageInfo,
     GalleryTag,
 )
-from ..eh.parser import _parse_size_text, parse_publish_time_iso
+from ..eh.parser import _parse_size_text, apply_status_filter, parse_publish_time_iso
 from ..eh.service import EHService
 from ..eh.title_parser import parse_title_authors
 from ..home_config import (
@@ -58,19 +58,23 @@ def _builder(request: Request) -> Opds2Builder:
     return Opds2Builder(request.app.state.settings)
 
 
-# Namespaces that should appear in the standard `subject` array.
-# These are the content-rating / target-audience dimensions that generic
-# OPDS clients can meaningfully consume.  All other tags are available in
-# full detail inside `extensions.tags`.
-_SUBJECT_NAMESPACES = {"female", "male", "mixed", "other", "parody"}
+# Namespaces excluded from the *list* subject (already exposed as dedicated
+# fields / parsed by the client): language (standalone field) and artist
+# (the client derives the author from image filenames). Detail documents
+# carry the full #taglist subject, so list subject stays a strict subset.
+_LIST_SUBJECT_EXCLUDED = frozenset({"language", "artist"})
 
 
-def _flatten_subjects(tags: list[GalleryTag]) -> list[str]:
-    """Flat deduped "ns:key" strings for gender/audience tags only."""
+def _flatten_subjects(tags: list[GalleryTag], exclude: frozenset[str] = frozenset()) -> list[str]:
+    """Flat deduped "ns:key" strings over the full tag set.
+
+    List feeds pass ``_LIST_SUBJECT_EXCLUDED`` to drop fields already exposed
+    elsewhere; detail documents pass nothing (complete #taglist).
+    """
     seen: set[str] = set()
     out: list[str] = []
     for t in tags:
-        if t.namespace not in _SUBJECT_NAMESPACES:
+        if t.namespace in exclude:
             continue
         s = str(t)
         if s not in seen:
@@ -84,22 +88,26 @@ def _sort_tags(tags: list[GalleryTag]) -> list[GalleryTag]:
     return sorted(tags, key=lambda t: t.style is None)
 
 
-def _tag_payload(t: GalleryTag) -> dict:
-    """extensions.tags entry: keep it minimal (status/style only when set)."""
+def _mytags_payload(t: GalleryTag) -> dict:
+    """extensions.mytags entry: minimal — namespace/key/style only.
+
+    status is consumed server-side by the global filter (never transmitted);
+    mytags is the list-feeds-only highlighted-tag subset clients use to look
+    up highlight styles when merging the detail document.
+    """
     item: dict = {"namespace": t.namespace, "key": t.key}
-    if t.status != "confidence":
-        item["status"] = t.status
     if t.style:
         item["style"] = t.style.as_dict()
     return item
 
 
-def _detail_extensions(detail: DetailPageInfo, tags: list[GalleryTag]) -> dict:
+def _detail_extensions(detail: DetailPageInfo) -> dict:
     """Single private-extension bucket consumed by the first-party client.
 
     Scraped from the detail page (gdata-equivalent): rating, Japanese title,
-    uploader, size, expunged, category and the full #taglist tags
-    (namespace/status/style). Standard fields stay out.
+    uploader, size, expunged, category. Tags never appear here: mytags is a
+    list-feeds-only field (the client merges the list item's mytags into the
+    detail view) and the full tag set lives in `subject`.
     """
     ext: dict = {}
     if detail.rating:
@@ -116,8 +124,6 @@ def _detail_extensions(detail: DetailPageInfo, tags: list[GalleryTag]) -> dict:
         ext["expunged"] = True
     if detail.category:
         ext["category"] = detail.category
-    if tags:
-        ext["tags"] = [_tag_payload(t) for t in tags]
     return ext
 
 
@@ -142,8 +148,9 @@ def _publication(
     """One publication object rendered purely from list-page HTML data.
 
     Browsing feeds never call the ehapi; extensions carry only what the list
-    page exposed (category, rating, tags). The client opens the detail
-    document for full metadata.
+    page exposed (category, rating) plus the highlighted-tag subset
+    ``mytags``. Full tags live in `subject` (minus fields exposed elsewhere:
+    language/artist). The client opens the detail document for full metadata.
     """
     category = item.category
     modified = _item_modified(item)
@@ -152,15 +159,17 @@ def _publication(
 
     clean_title, authors = parse_title_authors(item.title, category)
 
-    tags = _sort_tags(list(item.tags))
-    subjects = _flatten_subjects(tags)
+    tags = apply_status_filter(list(item.tags), builder.settings.tag_status_filter)
+    tags = _sort_tags(tags)
+    subjects = _flatten_subjects(tags, _LIST_SUBJECT_EXCLUDED)
     ext: dict = {}
     if item.rating:
         ext["rating"] = item.rating
     if item.category:
         ext["category"] = item.category
-    if tags:
-        ext["tags"] = [_tag_payload(t) for t in tags]
+    mytags = [t for t in tags if t.style]
+    if mytags:
+        ext["mytags"] = [_mytags_payload(t) for t in mytags]
     extensions = ext or None
 
     return builder.publication(
@@ -451,7 +460,8 @@ async def gallery_detail(request: Request, gid: int, token: str):
     detail = await service.get_detail_page(gid, token, 0)
     clean_title, authors = parse_title_authors(detail.title, detail.category)
     modified = _detail_modified(detail.publish_time)
-    tags = _sort_tags(list(detail.tags))
+    tags = apply_status_filter(list(detail.tags), builder.settings.tag_status_filter)
+    tags = _sort_tags(tags)
     subjects = _flatten_subjects(tags)
     pub = builder.publication(
         gid=gid,
@@ -464,7 +474,7 @@ async def gallery_detail(request: Request, gid: int, token: str):
         published=modified,
         subjects=subjects,
         number_of_pages=detail.image_count,
-        extensions=_detail_extensions(detail, tags),
+        extensions=_detail_extensions(detail),
     )
     content = builder.acquisition_document(
         title=clean_title,

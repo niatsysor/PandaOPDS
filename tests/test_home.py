@@ -605,3 +605,95 @@ async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
     assert ext["sizeBytes"] == 12939427  # 12.34 MB
     assert ext["category"] == "Manga"
     assert "expunged" not in ext
+
+
+@pytest.mark.asyncio
+async def test_opds2_list_mytags_only_highlighted(tmp_path, monkeypatch):
+    """extensions.mytags on list feeds: only tags with a style, no status,
+    and subject excludes language/artist while keeping the rest."""
+    from app.eh.models import GalleryTag, TagStyle
+
+    item = _item(1, "[Author] One")
+    item.tags = [
+        GalleryTag("language", "english", style=None),
+        GalleryTag("artist", "Someone", style=None),
+        GalleryTag("female", "netorare", style=TagStyle(background="#0f0")),
+        GalleryTag("parody", "Zenless Zone Zero", style=None),
+        GalleryTag("male", "uncertain", status="skepticism"),
+    ]
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(
+        service, "search_galleries",
+        _async_value(GalleryPageInfo(galleries=[item], next_gid=999)),
+    )
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0/gallery")
+    assert r.status_code == 200
+    md = r.json()["publications"][0]["metadata"]
+    # list subject: full set minus language/artist (skepticism kept: balanced)
+    assert md["subject"] == [
+        "female:netorare", "parody:Zenless Zone Zero", "male:uncertain",
+    ]
+    ext = md["extensions"]
+    assert ext["mytags"] == [
+        {
+            "namespace": "female",
+            "key": "netorare",
+            "style": {"background": "#0f0"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_opds2_detail_subject_full_and_no_mytags(tmp_path, monkeypatch):
+    """Detail document: full #taglist in subject (incl. language/artist),
+    no mytags (list-feeds-only field), incorrect dropped by default filter."""
+    from app.eh.models import GalleryTag, TagStyle
+
+    detail = _detail(1)
+    detail.tags = [
+        GalleryTag("language", "english", style=None),
+        GalleryTag("artist", "Someone", style=None),
+        GalleryTag("female", "netorare", style=TagStyle(background="#0f0")),
+        GalleryTag("parody", "Zenless Zone Zero", style=None),
+        GalleryTag("male", "wrong", status="incorrect"),
+    ]
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(service, "get_detail_page", _async_value(detail))
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0/gallery/1/tok1")
+    assert r.status_code == 200
+    md = r.json()["publications"][0]["metadata"]
+    # detail subject: complete taglist (language/artist included), incorrect dropped
+    # detail subject: complete taglist (language/artist included), incorrect
+    # dropped; highlighted tag sorts first (stable sort keeps original order)
+    assert md["subject"] == [
+        "female:netorare", "language:english", "artist:Someone",
+        "parody:Zenless Zone Zero",
+    ]
+    assert "mytags" not in md["extensions"]
+
+
+@pytest.mark.asyncio
+async def test_opds2_detail_subject_strict_filter(tmp_path, monkeypatch):
+    """TAG_STATUS_FILTER=strict drops skepticism from detail subject too."""
+    from app.eh.models import GalleryTag
+
+    detail = _detail(1)
+    detail.tags = [
+        GalleryTag("female", "a", style=None),
+        GalleryTag("male", "b", status="skepticism"),
+    ]
+    settings = _settings(tag_status_filter="strict")
+    service = EHService(settings)
+    monkeypatch.setattr(service, "get_detail_page", _async_value(detail))
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0/gallery/1/tok1")
+    assert r.status_code == 200
+    md = r.json()["publications"][0]["metadata"]
+    assert md["subject"] == ["female:a"]
