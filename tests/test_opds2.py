@@ -144,6 +144,30 @@ def test_publication_metadata_and_links():
     # pageBase was dropped: pages are 1-based by convention
     assert "pageBase" not in stream["properties"]
     assert "pageBase" not in acq["properties"]
+    # upstream E-Hentai gallery page (shareable; client never needs EH_SITE)
+    alt = links["alternate"]
+    assert alt["href"] == "https://e-hentai.org/g/123/abc/"
+    assert alt["type"] == "text/html"
+    assert alt["title"] == "e-hentai.org"
+    # alternate is appended last: links[0] stays the acquisition link
+    assert pub["links"][0]["rel"] == REL_ACQUISITION
+
+
+def test_publication_alternate_link_follows_eh_site_not_public_base():
+    """alternate always points at the upstream site (EH_SITE-driven); it is
+    absolute and unaffected by PUBLIC_BASE_URL (server-local links still
+    honor it)."""
+    builder = Opds2Builder(
+        _settings(eh_site="exhentai", public_base_url="https://opds.example.com")
+    )
+    pub = _pub(builder)
+    links = {l["rel"]: l for l in pub["links"]}
+    alt = links["alternate"]
+    assert alt["href"] == "https://exhentai.org/g/123/abc/"
+    assert alt["type"] == "text/html"
+    assert links[REL_ACQUISITION]["href"] == (
+        "https://opds.example.com/opds/v2.0/gallery/123/abc"
+    )
 
 
 def test_publication_standard_fields_omitted_when_unset():
@@ -176,6 +200,8 @@ def test_publication_no_page_count_omits_stream():
     # Without page_count, acquisition link won't have properties either.
     acq = [l for l in pub["links"] if l["rel"] == REL_ACQUISITION][0]
     assert "properties" not in acq
+    # alternate is unconditional (always shareable)
+    assert "alternate" in rels
 
 
 def test_publication_chinese_title_ascii_safe():

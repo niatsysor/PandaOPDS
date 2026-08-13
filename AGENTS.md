@@ -186,7 +186,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
   <updated>{iso8601}</updated>
   <author><name>{artist}</name></author>
   <category term="{genre}" label="{genre}" scheme="http://e-hentai.org"/>
-  <summary type="text">{语言/页数/上传者/评分/大小}</summary>
+  <!-- summary 当前不输出（预留）：列表/章节条目 summary 恒为空，与 v2.0 description 一致 -->
   <link rel="http://opds-spec.org/image/thumbnail" href="/image/{gid}/{token}/thumb" type="image/jpeg"/>
   <link rel="http://vaemendis.net/opds-pse/stream"
         href="/stream/{gid}/{token}/page/{pageNumber}"
@@ -200,9 +200,9 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 
 **字段分层约定（本项目核心）**：
 
-- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`description`/`modified`/`published`），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，`ns:key`，不含分类）：详情文档含完整 taglist（经 status 过滤后的全部标签）；列表 feed 是子集（额外剔除 `language`/`artist`——language 已有独立字段，author 由客户端从文件名解析）。
+- **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`modified`/`published`；`description` 预留、当前不输出），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，`ns:key`，不含分类）：详情文档含完整 taglist（经 status 过滤后的全部标签）；列表 feed 是子集（额外剔除 `language`/`artist`——language 已有独立字段，author 由客户端从文件名解析）。
 - **标签 status（社区可信度，全局过滤策略）**：EH 标签带 `gt`(confidence)/`gtl`(skepticism)/`gtw`(incorrect) class（列表页与详情页 `#taglist` 同构）。低于 `TAG_STATUS_FILTER` 等级（`balanced` 默认：confidence+skepticism；`strict`：仅 confidence；`off`：全部）的标签从 **subject 与 mytags 一并剔除**——拒绝模棱两可的标签进入目录。status **不传递给客户端**（服务端消费后即丢弃），客户端无法感知被过滤标签的存在。
-- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
+- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`uploader`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
 - **`extensions.mytags`（列表专属字段，详情不输出）**：仅含**带高亮 style 的标签**（经 status 过滤后），条目 = `namespace`/`key` + `style`（`color`/`borderColor`/`background`，来自列表页 inline style，`!important` 已剥离），**无 status**。语义 = "值得高亮展示的标签"，客户端用它查询高亮样式。详情文档不含 mytags（详情页 `#taglist` 本无高亮 style）——客户端展开详情时**合并**（subject 以详情完整版替换、mytags 保留列表条目继承高亮），勿整体替换重建。
 - **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`mytags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（gdata）。自研客户端必须按字段缺失容忍，完整元数据以详情文档为准（subject 亦以详情完整版为准）。
 - 标签高亮数据来源：列表 feed 的 `mytags` 来自列表页解析的高亮标签（布局固定 extended）；全量标签进 `subject`（列表精简 / 详情完整），二者皆经 `TAG_STATUS_FILTER` 统一过滤，保持子集关系。
@@ -213,14 +213,15 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
     "title": "{title}",
     "identifier": "urn:ehentai:gallery:{gid}:{token}",
     "modified": "{iso8601}",
-    "authors": [{"name": "{uploader}"}],
+    "authors": [{"name": "{作者：标题括号解析，非 uploader}"}],
     "language": ["{language}"],
     "subject": ["{ns}:{key}", "..."],
     "numberOfPages": {filecount},
-    "description": "{语言/页数/上传者/评分/大小}",
+    "description": "（预留，当前不输出）",
     "published": "{iso8601}",
     "extensions": {
       "rating": {rating},
+      "uploader": "{uploader}",
       "titleJpn": "{title_jpn}",
       "sizeBytes": {filesize},
       "expunged": {expunged},

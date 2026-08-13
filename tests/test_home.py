@@ -491,6 +491,11 @@ async def test_opds_v12_gallery_browse_never_calls_gdata(tmp_path, monkeypatch):
         for e in root.findall("a:entry", NS)
     ]
     assert titles == ["One"]
+    # list entries carry the upstream E-Hentai page (shareable, no EH_SITE)
+    entry = root.find("a:entry", NS)
+    alt = [l for l in entry.findall("a:link", NS) if l.get("rel") == "alternate"]
+    assert alt and alt[0].get("href") == "https://e-hentai.org/g/1/tok1/"
+    assert alt[0].get("type") == "text/html"
 
 
 @pytest.mark.asyncio

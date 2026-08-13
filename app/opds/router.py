@@ -23,6 +23,7 @@ from .feed import (
     MIME_OPEN_SEARCH,
     MIME_THUMB,
     REL_ACQUISITION,
+    REL_ALTERNATE,
     REL_STREAM,
     REL_THUMB,
     FeedBuilder,
@@ -110,6 +111,16 @@ def _gallery_entry(
                 count=page_count,
             )
         )
+    # Upstream E-Hentai gallery page: clients share this link without knowing
+    # EH_SITE. Appended last; absolute, independent of PUBLIC_BASE_URL.
+    links.append(
+        FeedLink(
+            rel=REL_ALTERNATE,
+            href=builder.upstream_url(item.gid, item.token),
+            type="text/html",
+            title=builder.settings.site_host,
+        )
+    )
 
     return FeedEntry(
         id=f"urn:ehentai:gallery:{item.gid}:{item.token}",

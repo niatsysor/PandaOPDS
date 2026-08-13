@@ -30,6 +30,7 @@ REL_NEXT = "next"
 REL_SUBSECTION = "subsection"
 REL_ACQUISITION = "http://opds-spec.org/acquisition"
 REL_STREAM = "http://vaemendis.net/opds-pse/stream"
+REL_ALTERNATE = "alternate"  # upstream E-Hentai gallery page (shareable)
 
 
 def _iso(unix_seconds: int | None = None) -> str:
@@ -48,6 +49,12 @@ class Opds2Builder:
     def href(self, path: str) -> str:
         """Prefix a relative path with the public base URL when configured."""
         return f"{self.base}{path}" if self.base else path
+
+    def upstream_url(self, gid: int, token: str) -> str:
+        """Canonical upstream gallery page (shareable; matches JHenTai
+        ``GalleryUrl.url``). Absolute, driven by EH_SITE — deliberately NOT
+        routed through ``href()`` so PUBLIC_BASE_URL never affects it."""
+        return f"https://{self.settings.site_host}/g/{gid}/{token}/"
 
     def serialize(self, doc: dict) -> str:
         return json.dumps(doc, ensure_ascii=False, indent=2)
@@ -259,6 +266,18 @@ class Opds2Builder:
                     properties=page_props,
                 )
             )
+        # Upstream E-Hentai gallery page: standard `alternate` link (Atom
+        # semantics), so clients can share the canonical EH URL without
+        # knowing EH_SITE. Appended last — links[0] stays the acquisition
+        # link for naive clients.
+        links.append(
+            self._link(
+                REL_ALTERNATE,
+                self.upstream_url(gid, token),
+                "text/html",
+                self.settings.site_host,
+            )
+        )
         # Cover/thumbnail goes in the `images` collection (OPDS 2.0 §2.3):
         # visual representations live there, not in `links` (the thumbnail
         # link relation is the OPDS 1.x approach; v1.2 Atom still uses it).

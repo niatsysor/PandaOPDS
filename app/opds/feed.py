@@ -23,6 +23,7 @@ REL_STREAM = "http://vaemendis.net/opds-pse/stream"
 REL_THUMB = "http://opds-spec.org/image/thumbnail"
 REL_IMAGE = "http://opds-spec.org/image"
 REL_ACQUISITION = "http://opds-spec.org/acquisition"
+REL_ALTERNATE = "alternate"  # upstream E-Hentai gallery page (shareable)
 REL_SUBSECTION = "subsection"
 REL_NEXT = "next"
 REL_SELF = "self"
@@ -75,6 +76,12 @@ class FeedBuilder:
     def href(self, path: str) -> str:
         """Prefix a relative path with the public base URL when configured."""
         return f"{self.base}{path}" if self.base else path
+
+    def upstream_url(self, gid: int, token: str) -> str:
+        """Canonical upstream gallery page (shareable; matches JHenTai
+        ``GalleryUrl.url``). Absolute, driven by EH_SITE — deliberately NOT
+        routed through ``href()`` so PUBLIC_BASE_URL never affects it."""
+        return f"https://{self.settings.site_host}/g/{gid}/{token}/"
 
     # -- document scaffolding ---------------------------------------------
 
@@ -226,6 +233,14 @@ class FeedBuilder:
                     href=self.href(f"/stream/{gid}/{token}/page/{{pageNumber}}"),
                     type="image/jpeg",
                     count=filecount,
+                ),
+                # Upstream E-Hentai gallery page (Atom ``alternate`` semantics
+                # = the entry's original web page); shareable by any client.
+                FeedLink(
+                    rel=REL_ALTERNATE,
+                    href=self.upstream_url(gid, token),
+                    type="text/html",
+                    title=self.settings.site_host,
                 ),
             ],
         )

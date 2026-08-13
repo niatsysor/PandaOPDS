@@ -136,6 +136,10 @@ def test_chapter_feed_pse_stream_link():
     assert link.get("type") == "image/jpeg"
     thumb = [l for l in root.findall(f".//{{{NS_ATOM}}}link") if l.get("rel") == REL_THUMB]
     assert thumb and thumb[0].get("href") == "/image/123/abc/thumb"
+    # upstream E-Hentai gallery page: standard Atom `alternate` link
+    alt = [l for l in root.findall(f".//{{{NS_ATOM}}}link") if l.get("rel") == "alternate"]
+    assert alt and alt[0].get("href") == "https://e-hentai.org/g/123/abc/"
+    assert alt[0].get("type") == "text/html"
     # entry title convention
     entry = root.find(f"{{{NS_ATOM}}}entry")
     assert entry.find(f"{{{NS_ATOM}}}title").text == "Chapter 1: My Gallery"

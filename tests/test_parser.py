@@ -471,11 +471,17 @@ def test_parse_publish_time_iso():
 
 
 def test_parse_real_extended_fixture():
-    """Regression: real extended-view HTML fixture has styled tags."""
+    """Regression: real extended-view HTML fixture has styled tags.
+
+    NOTE: the extended-view fixture is saved by the integration test as
+    ``list_page.html`` (renamed from ``list_page_extended.html``). It is the
+    ``itg glte`` Extended layout — the one the server forces via
+    ``inline_set=dm_e`` — so this is the critical-path tag parsing.
+    """
     from pathlib import Path
 
     fx = Path(__file__).parent / "fixtures"
-    fixture = fx / "list_page_extended.html"
+    fixture = fx / "list_page.html"
     if not fixture.exists():
         pytest.skip("real HTML fixture not present")
     info = parse_list_page(fixture.read_text(encoding="utf-8"))

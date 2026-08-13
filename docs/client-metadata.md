@@ -119,13 +119,13 @@
 
 | 字段 | 类型 | 说明 | 条件 |
 |---|---|---|---|
-| `title` | string | 图库标题（原始，含作者标签等） | 恒有 |
+| `title` | string | 干净标题（已剥离 `[...]`/`(...)` 标记；作者见 `authors` 字段） | 恒有 |
 | `identifier` | string | `urn:ehentai:gallery:{gid}:{token}` | 恒有 |
 | `modified` | string | 上传时间 ISO8601（UTC） | 恒有 |
-| `authors` | [ {`name`} ] | 上传者（uploader） | 非空时 |
+| `authors` | [ {`name`} ] | 作者（从标题 `[Author]` 括号解析，见 §3.6）；上传者本人见详情文档 `extensions.uploader` | 非空时 |
 | `language` | [string] | 语言（gdata language 标签，默认 `Japanese`） | 非空时 |
 | `published` | string | = `modified`（上传时间） | 恒有 |
-| `description` | string | `Language: {lang} \| Pages: {n} \| Uploader: {u} \| Rating: {r:.2f} \| Size: {s}`（详情文档另加 `Category: {c}`） | 恒有 |
+| `description` | string | **当前不输出**（预留字段；客户端如需描述，可自行拼接 `language`/`numberOfPages`/`authors`/`extensions.rating`/`extensions.sizeBytes`） | — |
 | `subject` | [string] | 拍平标签 `ns:key` 数组（Komga 风格，**不含分类**，去重保序） | 有标签时 |
 | `numberOfPages` | int | 页数（= `filecount`） | >0 时 |
 
@@ -138,15 +138,15 @@
 | `sizeBytes` | int | 文件总字节 | ≠0 时 |
 | `expunged` | bool | 已删除标记 | 仅 `true` 时输出 |
 | `category` | string | 分类（Doujinshi/Manga/Artist CG/Game CG/Image Set/Non-H/Western/Misc…） | 恒有 |
-| `tags` | [Tag] | 完整标签（见 §3.3） | 有标签时 |
+| `uploader` | string | 上传者（详情页 `#gdn`） | 仅详情文档，非空时 |
+| `mytags` | [Tag] | 仅**带高亮 style 的标签**（经 `TAG_STATUS_FILTER` 过滤后），条目 = `namespace`/`key` + `style`，**无 status**；**列表 feed 专属**（详情文档不输出，客户端展开详情时合并继承） | 有高亮标签时 |
 
-### 3.3 tags 条目
+### 3.3 mytags 条目（列表 feed 专属）
 
 ```json
 {
-  "namespace": "parody",
-  "key": "zenless zone zero",
-  "status": "skepticism",
+  "namespace": "female",
+  "key": "netorare",
   "style": {
     "color": "#f1f1f1",
     "borderColor": "#048751",
@@ -159,11 +159,11 @@
 |---|---|---|
 | `namespace` | 命名空间（`female`/`male`/`parody`/`language`/`artist`/`group`/`character`/`temp`…） | 恒有 |
 | `key` | 标签名（下划线已还原为空格） | 恒有 |
-| `status` | `skepticism`（质疑）\| `incorrect`（错误）\| `confidence`（默认，**不输出**） | 非常规时 |
 | `style` | 高亮标签样式（投票高的 featured 标签），取自上游 inline style，`!important` 已剥离 | 仅高亮标签 |
 
-- **列表/首页 feed**：tags = gdata 全量 + 列表页高亮 overlay（布局相关：compact/extended 全量、thumbnail 仅高亮、minimal 无）。
-- **详情文档**：tags 来自详情页 `#taglist`（完整 + status + style，1h 缓存）；详情页不可用时回退 gdata 标签。
+- **无 `status` 字段**：标签可信度（`gt`/`gtl`/`gtw`）由服务端 `TAG_STATUS_FILTER` 全局消费后即丢弃，不传输给客户端；客户端无法感知被过滤标签的存在。
+- **仅列表 feed**：首页/列表的 `mytags` 来自列表页解析的高亮标签（仅含带 inline style 的 featured 标签，经 status 过滤）。**详情文档不输出 `mytags`**（详情页 `#taglist` 无高亮 style）——客户端展开详情时以详情 `subject` 完整版替换、`mytags` 保留列表条目继承高亮，勿整体替换重建。
+- **全量标签**：进 `subject`（列表精简 / 详情完整，二者同经 `TAG_STATUS_FILTER`，保持子集关系）；详情文档的完整 `subject` 即为全量标签。
 
 ### 3.4 链接（`links[]`）
 
@@ -171,6 +171,7 @@
 |---|---|---|---|
 | `http://opds-spec.org/acquisition` | `/opds/v2.0/gallery/{gid}/{token}` | `application/opds+json;profile=acquisition` | `properties.numberOfItems` = 页数（>0 时） |
 | `http://vaemendis.net/opds-pse/stream` | `/stream/{gid}/{token}/page/{pageNumber}` | `image/jpeg` | `properties.numberOfItems` = 页数；`{pageNumber}` 占位符由客户端替换；页数>0 时 |
+| `alternate` | 上游 E-Hentai 图库页 `https://{e-hentai\|exhentai}.org/g/{gid}/{token}/` | `text/html` | **恒有**；**分享表单取此 link**（客户端无需感知 `EH_SITE`）；绝对 URL，不受 `PUBLIC_BASE_URL` 影响 |
 
 > **封面不在 `links` 中**：thumbnail link rel（`http://opds-spec.org/image/thumbnail`）是 OPDS 1.x 的做法，v2.0 按规范 §2.3 放入 `images[]` 集合（见 §3.5）。v1.2（Atom）仍用 link rel。
 
@@ -196,25 +197,19 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 ```json
 {
   "metadata": {
-    "title": "[leopoldo] Nejire [AI Generated]",
+    "title": "Nejire",
     "identifier": "urn:ehentai:gallery:4113236:73634e0e9a",
     "modified": "2025-08-11T08:13:20Z",
     "authors": [{ "name": "leopoldo" }],
     "language": ["chinese"],
     "published": "2025-08-11T08:13:20Z",
-    "description": "Language: chinese | Pages: 42 | Uploader: leopoldo | Rating: 4.50 | Size: 25.30MB",
     "subject": ["language:chinese", "female:netorare", "parody:zenless zone zero"],
     "numberOfPages": 42,
     "extensions": {
       "rating": 4.5,
-      "titleJpn": "テストタイトル",
-      "sizeBytes": 26528973,
       "category": "Manga",
-      "tags": [
-        { "namespace": "language", "key": "chinese" },
-        { "namespace": "female", "key": "netorare" },
-        { "namespace": "parody", "key": "zenless zone zero",
-          "status": "skepticism",
+      "mytags": [
+        { "namespace": "female", "key": "netorare",
           "style": { "color": "#f1f1f1", "borderColor": "#048751",
                      "background": "radial-gradient(#048751,#24A771)" } }
       ]
@@ -222,10 +217,12 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
   },
   "links": [
     { "rel": "http://opds-spec.org/acquisition", "href": "/opds/v2.0/gallery/4113236/73634e0e9a",
-      "type": "application/opds+json;profile=acquisition", "title": "[leopoldo] Nejire [AI Generated]",
+      "type": "application/opds+json;profile=acquisition", "title": "Nejire",
       "properties": { "numberOfItems": 42 } },
     { "rel": "http://vaemendis.net/opds-pse/stream", "href": "/stream/4113236/73634e0e9a/page/{pageNumber}",
-      "type": "image/jpeg", "properties": { "numberOfItems": 42 } }
+      "type": "image/jpeg", "properties": { "numberOfItems": 42 } },
+    { "rel": "alternate", "href": "https://e-hentai.org/g/4113236/73634e0e9a/",
+      "type": "text/html", "title": "e-hentai.org" }
   ],
   "images": [
     { "href": "/image/4113236/73634e0e9a/thumb", "type": "image/jpeg" }
@@ -250,7 +247,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 
 ### 4.2 详情文档（`/opds/v2.0/gallery/{gid}/{token}`）
 
-- `publications` 仅 1 条；`description` 含 `Category`；`extensions.tags` 为详情页完整标签（§3.3）。
+- `publications` 仅 1 条；**不输出 `description`**；完整标签在 `subject`（详情 `#taglist` 全量，经 `TAG_STATUS_FILTER` 过滤）；`extensions` 含 `rating`/`uploader`/`titleJpn`/`sizeBytes`/`expunged`/`category`（**无 `mytags`**，§3.3）。
 - 图库不存在 → 404。
 
 ### 4.3 搜索
@@ -271,6 +268,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 | `http://opds-spec.org/acquisition` | 获取详情 |
 | `http://opds-spec.org/image/thumbnail` | 封面（**仅 v1.2 Atom**；v2.0 走 `images[]` 集合，§3.5） |
 | `http://vaemendis.net/opds-pse/stream` | PSE 串流（`{pageNumber}` 占位符） |
+| `alternate` | 上游 E-Hentai 原始网页（恒有，分享/跳浏览器用） |
 
 ---
 
@@ -311,10 +309,11 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 | `title` | 列表 = 标题；章节 = `Chapter 1: {title}` |
 | `updated` / `author/name` | 上传时间 / 上传者 |
 | `category` | `term`/`label` = 分类，`scheme="http://e-hentai.org"` |
-| `summary` | 同 v2.0 `description`（`Language \| Pages \| Uploader \| Rating \| Size`，详情另加 `Category`） |
+| `summary` | **当前不输出**（预留；v1.2 列表/章节条目 `summary` 恒为空，与 v2.0 `description` 一致） |
 | link `http://opds-spec.org/image/thumbnail` | 封面 |
 | link `http://opds-spec.org/acquisition` | `/opds/v1.2/gallery/{gid}/{token}/chapters` |
 | link `http://vaemendis.net/opds-pse/stream` | `/stream/{gid}/{token}/page/{pageNumber}`，`type="image/jpeg"`，**`pse:count` 属性** = 页数（命名空间 `http://vaemendis.net/opds-pse/ns`） |
+| link `alternate` | 上游 E-Hentai 图库页（`type="text/html"`），分享/跳浏览器用 |
 
 ---
 
@@ -325,5 +324,6 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 3. `navigation[]` → 渲染为普通导航列表（可点击进入完整列表）。
 4. 搜索：用顶层 `search` link 的 JSON 模板替换 `{searchTerms}`。
 5. 分页：`rel="next"`（gallery 传 `next`，toplist 传 `page`）。
-6. 详情：`/opds/v2.0/gallery/{gid}/{token}` 取完整 tags（status/style）；首页/列表的 tags 已含高亮 overlay，可直接渲染。
+6. 详情：`/opds/v2.0/gallery/{gid}/{token}` 的 `subject` 为完整标签（经 status 过滤）；列表 `mytags` 无 status、仅高亮样式——展开详情时用详情 `subject` 替换列表精简版、`mytags` 保留列表条目继承高亮（勿整体替换重建）。
 7. 失效兜底：单个 group 上游故障时该 group 不出现在 `groups[]` 中（其他 groups 和 navigation 照常）；首页布局由 `home.toml` 配置驱动，客户端无需感知。
+8. **分享**：取 publication / entry 的 `rel="alternate"` link（`type="text/html"`）作为分享 URL——即上游 E-Hentai 页面（e-hentai.org 或 exhentai.org，服务端已按 `EH_SITE` 拼好），客户端无需感知 `EH_SITE`。勿用 acquisition/stream（那些是服务端资源，离开服务端不可达）。
