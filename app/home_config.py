@@ -70,7 +70,9 @@ class Section:
     title: str
     type: str          # "preset" | "search"
     query: str
-    count: int = 0     # publication count (kind="publication" only)
+    count: int = 0     # publication preview count (kind="publication" only);
+                       # TOML omission → DEFAULT_PUBLICATION_PREVIEW_COUNT;
+                       # explicit 0 → disabled (no fetch, no render)
     group: str = ""    # GroupDef id; "" → standalone pub or root nav
 
 
@@ -154,6 +156,11 @@ def is_auth_required(type: str, query: str) -> bool:
 # TOML parsing
 # ---------------------------------------------------------------------------
 
+# A publication section that omits `count` previews this many galleries by
+# default (instead of silently rendering nothing). Explicit `count = 0`
+# disables the preview and skips the upstream list fetch.
+DEFAULT_PUBLICATION_PREVIEW_COUNT = 10
+
 def parse_home_toml(path: Path) -> HomeConfig:
     """Parse a home.toml file into a HomeConfig."""
     with open(path, "rb") as f:
@@ -168,12 +175,23 @@ def parse_home_toml(path: Path) -> HomeConfig:
 
     sections: list[Section] = []
     for item in raw.get("section", []):
+        kind = item.get("kind", "publication")
+        if "count" in item:
+            count = item["count"]
+        else:
+            # Missing `count` on a publication section previews a default
+            # number of galleries; only an explicit `count = 0` disables.
+            count = (
+                DEFAULT_PUBLICATION_PREVIEW_COUNT
+                if kind == "publication"
+                else 0
+            )
         sections.append(Section(
-            kind=item.get("kind", "publication"),
+            kind=kind,
             title=item.get("title", ""),
             type=item.get("type", "preset"),
             query=item.get("query", "latest"),
-            count=item.get("count", 0),
+            count=count,
             group=item.get("group", ""),
         ))
 

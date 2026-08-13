@@ -9,7 +9,7 @@
 #   group           = 引用 [[group]] 的 id；不设 → 独立
 #   kind            = "publication"（含内嵌预览）| "navigation"（纯链接）
 #   type / query    = "preset" + 内置 key 或 "search" + 搜索表达式
-#   count           = publication 时生效，内嵌预览条数
+#   count           = publication 时生效，内嵌预览条数；缺省 = 10，显式 0 = 禁用
 #
 # 规则：
 #   - 同一 group 的 section 合并进一个 groups[] 槽位（publication + navigation 可混）

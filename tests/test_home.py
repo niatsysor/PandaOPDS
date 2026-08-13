@@ -326,6 +326,78 @@ async def test_opds2_home_custom_toml(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_opds2_home_publication_default_count(tmp_path, monkeypatch):
+    """A publication section without `count` falls back to the default
+    preview size (10) instead of silently rendering nothing."""
+    toml = tmp_path / "home.toml"
+    toml.write_text(
+        '[[group]]\n'
+        'id = "g1"\n'
+        'title = "Group One"\n'
+        '\n'
+        '[[section]]\n'
+        'group = "g1"\n'
+        'kind = "publication"\n'
+        'title = "Pub Preview"\n'
+        'type = "preset"\n'
+        'query = "toplist:yesterday"\n',
+        encoding="utf-8",
+    )
+    settings = _settings(home_config_path=toml)
+    service = EHService(settings)
+    items = [_item(i, f"Item {i}") for i in range(1, 13)]
+    monkeypatch.setattr(
+        service,
+        "toplist_galleries",
+        _async_value(GalleryPageInfo(galleries=items, next_gid=999)),
+    )
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0")
+    assert r.status_code == 200
+    doc = r.json()
+    groups = {g["metadata"]["title"]: g for g in doc["groups"]}
+    pubs = groups["Group One"]["publications"]
+    assert len(pubs) == 10  # DEFAULT_PUBLICATION_PREVIEW_COUNT
+    assert pubs[0]["metadata"]["title"] == "Item 1"
+
+
+@pytest.mark.asyncio
+async def test_opds2_home_publication_explicit_zero_disabled(tmp_path, monkeypatch):
+    """Explicit `count = 0` keeps the opt-out: the section is not fetched
+    and renders nothing (no `publications` key on the group)."""
+    toml = tmp_path / "home.toml"
+    toml.write_text(
+        '[[group]]\n'
+        'id = "g1"\n'
+        'title = "Group One"\n'
+        '\n'
+        '[[section]]\n'
+        'group = "g1"\n'
+        'kind = "publication"\n'
+        'title = "Pub Preview"\n'
+        'type = "preset"\n'
+        'query = "toplist:yesterday"\n'
+        'count = 0\n',
+        encoding="utf-8",
+    )
+    settings = _settings(home_config_path=toml)
+    service = EHService(settings)
+
+    async def boom(*a, **k):
+        raise AssertionError("count=0 section must not be fetched")
+
+    monkeypatch.setattr(service, "toplist_galleries", boom)
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0")
+    assert r.status_code == 200
+    doc = r.json()
+    groups = {g["metadata"]["title"]: g for g in doc["groups"]}
+    assert "publications" not in groups["Group One"]
+
+
+@pytest.mark.asyncio
 async def test_opds2_toplist_route(tmp_path, monkeypatch):
     settings = _settings()
     service = EHService(settings)

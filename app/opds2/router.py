@@ -269,10 +269,20 @@ async def root_feed(request: Request):
         pubs: list[dict] = []
         navs: list[dict] = []
         for s in grp_sections:
-            if s.kind == "publication" and id(s) in fetched:
-                items = fetched[id(s)].galleries[: s.count]
-                for item in items:
-                    pubs.append(_publication(builder, item))
+            if s.kind == "publication":
+                if id(s) in fetched:
+                    items = fetched[id(s)].galleries[: s.count]
+                    for item in items:
+                        pubs.append(_publication(builder, item))
+                else:
+                    # Fetch skipped (count=0 opt-out) or failed: surface the
+                    # silent drop instead of vanishing without a trace.
+                    logger.warning(
+                        "publication section %r (group=%r) rendered no "
+                        "preview: fetch skipped or failed",
+                        s.title,
+                        s.group,
+                    )
             elif s.kind == "navigation":
                 navs.append({
                     "title": s.title,
