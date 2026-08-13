@@ -28,9 +28,11 @@ def _ensure_fixture_dir() -> None:
 
 
 def _integration_enabled() -> bool:
-    return bool(
-        os.getenv("IPB_MEMBER_ID") and os.getenv("IPB_PASS_HASH")
-    ) or os.getenv("RUN_EH_INTEGRATION") == "1"
+    # Explicit opt-in only (documented in README): the regular test suite must
+    # never touch E-Hentai, even when .env provides IPB cookies — load_dotenv()
+    # makes them visible here and an implicit gate would fire real network
+    # calls on every `pytest` run (ban risk, fixture churn).
+    return os.getenv("RUN_EH_INTEGRATION") == "1"
 
 
 @pytest.mark.skipif(not _integration_enabled(), reason="requires E-Hentai cookies")

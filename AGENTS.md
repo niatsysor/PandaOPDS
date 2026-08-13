@@ -80,9 +80,9 @@ Content-Type: application/json
 - 返回 `gmetadata` 数组：`gid, token, title, title_jpn, category, thumb, rating, tags, filecount, filesize, posted, uploader, torrentcount, expunged`。
 - **每请求最多 25 个 gid**。`filecount` 即 OPDS 的 `pse:count`。
 
-### gdata 调用时机（传统爬虫模式，浏览零 ehapi）
+### gdata 调用时机（传统爬虫模式，主链路零 ehapi）
 
-浏览阶段（列表/首页/toplist feed）**禁止调用 gdata**：条目完全由列表页 HTML 解析数据渲染（`GalleryListItem`：标题/分类/封面/页数/评分/发布时间/语言/全量标签）。只有客户端打开**详情文档**（v1.2 `/chapters`、v2.0 `/gallery/{gid}/{token}`）时才调用 `get_metadata`（gdata），且结果缓存 `METADATA_TTL_SECONDS`（默认 10min）。这是服务端防 ehapi 被浏览行为大量消耗的核心约束：**API 用量只与进详情成正比**。
+浏览阶段（列表/首页/toplist feed）**禁止调用 gdata**：条目完全由列表页 HTML 解析数据渲染（`GalleryListItem`：标题/分类/封面/页数/评分/发布时间/语言/全量标签）。**详情文档同样零 gdata**：v1.2 `/chapters`、v2.0 `/gallery/{gid}/{token}` 直接用详情页 HTML 渲染——详情页本身携带 gdata 等价字段（`#gn`/`#gj`/`#gdd`/`#gdn`/`#grt2`/`#gd5`，对齐 JHenTai `detailPage2GalleryAndDetailAndApikey`），且该页面已由 `/stream` 主链路抓取并缓存 1h。gdata（`get_metadata`/`get_metadatas`）保留在 service 层作兜底与测试用，主链路不再触发：**API 用量为 0**。
 
 缩略图 `/image/{gid}/{token}/thumb` 同样不依赖 gdata：优先命中列表解析时写入的 cover 内存缓存，冷未命中回退详情页第 0 页第一个缩略图（1 次 HTML 请求服务 20 个 `/stream`）。
 
@@ -122,7 +122,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 |---|---|---|---|
 | 列表页解析结果（search/popular/watched/favorites/toplist） | 内存 | 10min | 首页/展示区块高频命中，避免重复抓列表页（`LIST_CACHE_TTL_SECONDS`）；解析时顺带写入 cover 缓存 |
 | cover URL（列表页封面） | 内存 | 1h | 缩略图代理零 ehapi 的依赖（`cover:{gid}:{token}`，TTL 同页面 URL 映射） |
-| 图库元数据（gdata 结果） | 内存 | 10min | 仅详情文档触发（`METADATA_TTL_SECONDS`），~1-2KB/条 |
+| 图库元数据（gdata 结果） | 内存 | 10min | 主链路不再触发（详情走详情页 HTML）；保留 service 层作兜底/测试（`METADATA_TTL_SECONDS`），~1-2KB/条 |
 | 页面 URL 映射（/s/ 列表） | 内存 | 1h | 避免重复翻页 |
 | 图片字节 | 磁盘 LRU | 7 天 | 默认 4GB（环境变量 `CACHE_DIR`/`CACHE_MAX_GB` 可调），可关 |
 
@@ -265,7 +265,7 @@ FastAPI (uvicorn) 单进程
 
 一次图库完整生命周期：
 1. **浏览阶段**（列表/首页/toplist feed）：只抓列表页 HTML → `parse_list_page` 渲染条目（零 ehapi），顺带写入 cover 缓存
-2. **详情文档请求**（v1.2 `/chapters` / v2.0 `/gallery/{gid}/{token}`）→ 元数据缓存未命中 → `gdata` 拿 `filecount`/标题/标签/评分 → 生成条目（v1.2 `pse:count` / v2.0 `numberOfItems` = filecount；缓存 `METADATA_TTL_SECONDS` 默认 10min）
+2. **详情文档请求**（v1.2 `/chapters` / v2.0 `/gallery/{gid}/{token}`）→ `get_detail_page(gid, token, 0)`（详情页 HTML，缓存 1h，与 `/stream` 共享）→ 解析 `#gn`/`#gj`/`#gdd`/`#gdn`/`#grt2`/`#taglist` 渲染完整条目；**此次抓取同时预暖 page-URL 映射，客户端点"立即阅读"时详情页缓存命中，进入阅读器少一次串行上游往返**（这是客户端"点开详情 → 预取 → 秒开阅读器"的关键路径）
 3. `/stream/page/{n}` 请求 → 页面 URL 缓存未命中 → 抓详情页 `?p={(n-1)//20}`（1 请求服务 20 页）→ 取第 n 个 `/s/` URL → 抓 `/s/` 页解析 `#img` src → 抓图片字节 → 磁盘缓存 → 流式返回（n 为 1-based 时）
 4. 触发 509 → 429；banned/exceedLimit → 全局熔断
 

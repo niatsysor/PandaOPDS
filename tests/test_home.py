@@ -3,8 +3,7 @@
 Covers:
 - ranklist page parsing (`.ptt` page-number pagination fallback)
 - EHService.toplist_galleries (period -> `?tl=`, `?p=` pagination)
-- v2.0 home: auth-gated nav, showcase flag + whitelist, top-level Latest
-  publications fallback (no Home nav item)
+- v2.0 home: TOML-driven layout (groups + navigation), auth-gated nav
 - v1.2 home: pure navigation, auth-gated, no extensions
 - /toplist routes (v1.2 + v2.0)
 """
@@ -14,6 +13,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from lxml import html
 
 from app.config import Settings
 from app.eh.exceptions import EHException
@@ -25,7 +25,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "list_page.html"
 
 
 def _settings(**kw) -> Settings:
-    base = dict(ipb_member_id="1", ipb_pass_hash="abc")
+    base = dict(ipb_member_id="1", ipb_pass_hash="abc", home_config_path=None)
     base.update(kw)
     return Settings(**base)
 
@@ -45,19 +45,30 @@ def _item(gid: int, title: str) -> GalleryListItem:
 # ranklist page parsing (`.ptt` pagination fallback)
 # --------------------------------------------------------------------------
 
-def _compact_rows(n: int) -> str:
-    html = FIXTURE.read_text(encoding="utf-8")
-    m = re.search(r'<table class="itg gltc".*?</table>', html, re.S)
-    assert m, "fixture has no compact table"
-    rows = [r for r in re.findall(r"<tr>.*?</tr>", m.group(0), re.S) if "<th" not in r]
-    return "".join(rows[:n])
+def _gallery_rows(n: int) -> str:
+    """First `n` gallery rows from the extended-view fixture (real HTML).
+
+    Rows are extracted via lxml so nested tag rows stay inside their gallery
+    row (a plain regex would truncate the table at the first nested
+    `</table>`).
+
+    Skipped when the fixtures are absent (fresh clone): `tests/fixtures/`
+    holds real E-Hentai page captures and is gitignored by design.
+    """
+    if not FIXTURE.exists():
+        pytest.skip("real HTML fixtures not present")
+    doc = html.fromstring(FIXTURE.read_text(encoding="utf-8"))
+    tbl = doc.cssselect("table.itg.glte")[0]
+    rows = [r for r in tbl.cssselect("tr") if r.cssselect('a[href*="/g/"]')]
+    assert len(rows) >= n, f"fixture has {len(rows)} gallery rows, need {n}"
+    return "".join(html.tostring(r, encoding="unicode") for r in rows[:n])
 
 
 def ranklist_html(n: int = 2) -> str:
-    """Ranklist page: compact rows + `.ptt` pagination, no `#unext`."""
+    """Ranklist page: extended rows + `.ptt` pagination, no `#unext`."""
     return (
         "<html><body>"
-        f'<table class="itg gltc">{_compact_rows(n)}</table>'
+        f'<table class="itg glte">{_gallery_rows(n)}</table>'
         '<div class="ptt"><table><tr>'
         '<td><a href="/toplist.php?tl=15">First</a></td>'
         "<td>1</td><td>2</td>"
@@ -67,8 +78,8 @@ def ranklist_html(n: int = 2) -> str:
     )
 
 
-def test_ranklist_page_reuses_compact_parser_and_ptt_pagination():
-    """Toplist rows parse through the compact view; pagination comes from the
+def test_ranklist_page_reuses_extended_parser_and_ptt_pagination():
+    """Toplist rows parse through the extended view; pagination comes from the
     `.ptt` next link (`?p=`), not `#unext` lastGid."""
     info = parse_list_page(ranklist_html(2))
     assert len(info.galleries) == 2
@@ -80,7 +91,7 @@ def test_ranklist_page_reuses_compact_parser_and_ptt_pagination():
 def test_ranklist_last_page_has_no_next_page():
     html = (
         "<html><body>"
-        f'<table class="itg gltc">{_compact_rows(1)}</table>'
+        f'<table class="itg glte">{_gallery_rows(1)}</table>'
         '<div class="ptt"><table><tr>'
         "<td>1</td><td><b>2</b></td>"
         "</tr></table></div>"
@@ -108,12 +119,17 @@ async def test_toplist_galleries_params_and_period(tmp_path, monkeypatch):
     monkeypatch.setattr(service, "_html_get", fake_html_get)
 
     info = await service.toplist_galleries(period="month", page=2)
-    assert seen == [("/toplist.php", {"tl": "13", "p": "2"})]
+    assert seen == [
+        ("https://e-hentai.org/toplist.php", {"tl": "13", "p": "2", "inline_set": "dm_e"})
+    ]
     assert len(info.galleries) == 1
 
     # page 1 omits the `p` param
     await service.toplist_galleries(period="yesterday")
-    assert seen[-1] == ("/toplist.php", {"tl": "15"})
+    assert seen[-1] == (
+        "https://e-hentai.org/toplist.php",
+        {"tl": "15", "inline_set": "dm_e"},
+    )
 
     # invalid period
     with pytest.raises(EHException):
@@ -160,8 +176,9 @@ async def _get(path: str):
 
 @pytest.mark.asyncio
 async def test_opds2_home_no_auth(tmp_path, monkeypatch):
-    """Without IPB cookies: Watched/Favorites omitted, everything else present
-    and flagged showcase (default whitelist = all)."""
+    """Without IPB cookies: default TOML layout — groups carry publication
+    previews + in-group navigation; ungrouped navigation lands in root
+    navigation; auth-gated sections (favorites) are omitted."""
     settings = _settings(ipb_member_id="", ipb_pass_hash="")
     service = EHService(settings)
     monkeypatch.setattr(
@@ -171,33 +188,39 @@ async def test_opds2_home_no_auth(tmp_path, monkeypatch):
             GalleryPageInfo(galleries=[_item(1, "One"), _item(2, "Two")], next_gid=999)
         ),
     )
-    monkeypatch.setattr(service, "get_metadatas", _async_value([]))
+    monkeypatch.setattr(
+        service,
+        "popular_galleries",
+        _async_value(GalleryPageInfo(galleries=[_item(3, "Three")], next_gid=998)),
+    )
+    monkeypatch.setattr(
+        service,
+        "toplist_galleries",
+        _async_value(GalleryPageInfo(galleries=[_item(4, "Four")], next_gid=997)),
+    )
     _install_app_state(settings, service)
 
     r = await _get("/opds/v2.0")
     assert r.status_code == 200
     doc = r.json()
 
-    titles = [n["metadata"]["title"] for n in doc["navigation"]]
-    assert "Watched" not in titles
-    assert "Favorites" not in titles
-    assert "Popular" in titles
-    assert [t for t in titles if t.startswith("Toplist")] == [
-        "Toplist: Yesterday",
-        "Toplist: Past Month",
-        "Toplist: Past Year",
-        "Toplist: All Time",
-    ]
-    # default: every present nav item carries the showcase flag
-    for n in doc["navigation"]:
-        assert n["metadata"]["extensions"] == {"layout": "showcase"}
+    # ungrouped navigation sections only; 我的收藏 (favorites) is auth-gated
+    nav_titles = [n["metadata"]["title"] for n in doc["navigation"]]
+    assert nav_titles == ["历史总榜", "日文原版"]
+    assert "Watched" not in nav_titles and "Favorites" not in nav_titles
 
-    # top-level Latest publications fallback + rel=next
-    assert len(doc["publications"]) == 2
-    rels = {l["rel"] for l in doc["links"]}
-    assert "next" in rels
-    next_link = next(l for l in doc["links"] if l["rel"] == "next")
-    assert next_link["href"] == "/opds/v2.0/gallery?next=999"
+    # groups merge their sections into one slot (publications + navigation)
+    groups = {g["metadata"]["title"]: g for g in doc["groups"]}
+    assert set(groups) == {"排行榜", "浏览", "中文同人"}
+    assert len(groups["排行榜"]["publications"]) == 1
+    assert [n["title"] for n in groups["排行榜"]["navigation"]] == ["月度精选", "年度佳作"]
+    assert [n["title"] for n in groups["浏览"]["navigation"]] == ["最新上传"]
+    assert len(groups["浏览"]["publications"]) == 1
+    assert len(groups["中文同人"]["publications"]) == 2
+
+    # no top-level publications fallback (previews live in groups) / rel=next
+    assert "publications" not in doc
+    assert "next" not in {l["rel"] for l in doc["links"]}
 
 
 def _async_value(v):
@@ -211,33 +234,71 @@ def _async_value(v):
 
 @pytest.mark.asyncio
 async def test_opds2_home_with_auth(tmp_path, monkeypatch):
-    """With IPB cookies: Watched/Favorites present and flagged."""
+    """With IPB cookies: auth-gated ungrouped navigation sections appear."""
     settings = _settings()
     service = EHService(settings)
     monkeypatch.setattr(service, "search_galleries", _async_value(GalleryPageInfo()))
-    monkeypatch.setattr(service, "get_metadatas", _async_value([]))
+    monkeypatch.setattr(service, "popular_galleries", _async_value(GalleryPageInfo()))
+    monkeypatch.setattr(service, "toplist_galleries", _async_value(GalleryPageInfo()))
     _install_app_state(settings, service)
 
     r = await _get("/opds/v2.0")
     doc = r.json()
-    titles = [n["metadata"]["title"] for n in doc["navigation"]]
-    assert "Watched" in titles and "Favorites" in titles
+    nav_titles = [n["metadata"]["title"] for n in doc["navigation"]]
+    assert nav_titles == ["历史总榜", "我的收藏", "日文原版"]
 
 
 @pytest.mark.asyncio
-async def test_opds2_home_showcase_whitelist(tmp_path, monkeypatch):
-    """SHOWCASE_NAV whitelist: only listed items carry the flag."""
-    settings = _settings(showcase_nav=["popular"])
+async def test_opds2_home_custom_toml(tmp_path, monkeypatch):
+    """A custom home.toml drives the layout: mixed publication + navigation
+    sections merge into one group slot; auth-gated nav is dropped without
+    cookies."""
+    toml = tmp_path / "home.toml"
+    toml.write_text(
+        '[[group]]\n'
+        'id = "g1"\n'
+        'title = "Group One"\n'
+        '\n'
+        '[[section]]\n'
+        'group = "g1"\n'
+        'kind = "publication"\n'
+        'title = "Pub Preview"\n'
+        'type = "search"\n'
+        'query = "language:chinese"\n'
+        'count = 3\n'
+        '\n'
+        '[[section]]\n'
+        'group = "g1"\n'
+        'kind = "navigation"\n'
+        'title = "Popular"\n'
+        'type = "preset"\n'
+        'query = "popular"\n'
+        '\n'
+        '[[section]]\n'
+        'kind = "navigation"\n'
+        'title = "Watched"\n'
+        'type = "preset"\n'
+        'query = "watched"\n',
+        encoding="utf-8",
+    )
+    settings = _settings(ipb_member_id="", ipb_pass_hash="", home_config_path=toml)
     service = EHService(settings)
-    monkeypatch.setattr(service, "search_galleries", _async_value(GalleryPageInfo()))
-    monkeypatch.setattr(service, "get_metadatas", _async_value([]))
+    monkeypatch.setattr(
+        service,
+        "search_galleries",
+        _async_value(GalleryPageInfo(galleries=[_item(1, "One")], next_gid=999)),
+    )
     _install_app_state(settings, service)
 
     r = await _get("/opds/v2.0")
+    assert r.status_code == 200
     doc = r.json()
-    by_title = {n["metadata"]["title"]: n for n in doc["navigation"]}
-    assert by_title["Popular"]["metadata"]["extensions"] == {"layout": "showcase"}
-    assert "extensions" not in by_title["Watched"]["metadata"]
+    groups = {g["metadata"]["title"]: g for g in doc["groups"]}
+    assert set(groups) == {"Group One"}
+    assert len(groups["Group One"]["publications"]) == 1
+    assert [n["title"] for n in groups["Group One"]["navigation"]] == ["Popular"]
+    # auth-gated ungrouped navigation omitted → empty root navigation
+    assert doc["navigation"] == []
 
 
 @pytest.mark.asyncio
@@ -249,7 +310,6 @@ async def test_opds2_toplist_route(tmp_path, monkeypatch):
         "toplist_galleries",
         _async_value(GalleryPageInfo(galleries=[_item(7, "Ranked")], next_page=2)),
     )
-    monkeypatch.setattr(service, "get_metadatas", _async_value([]))
     _install_app_state(settings, service)
 
     r = await _get("/opds/v2.0/toplist?period=month")
@@ -267,7 +327,8 @@ async def test_opds2_toplist_route(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_opds_v12_home_no_auth(tmp_path):
-    """v1.2 stays pure navigation: no extensions, no Home, no publications."""
+    """v1.2 stays pure navigation: all TOML sections flattened to nav links,
+    auth-gated ones dropped; no extension markers."""
     from lxml import etree
 
     settings = _settings(ipb_member_id="", ipb_pass_hash="")
@@ -279,11 +340,10 @@ async def test_opds_v12_home_no_auth(tmp_path):
     root = etree.fromstring(r.content)
     NS = {"a": "http://www.w3.org/2005/Atom"}
     titles = [e.findtext("a:title", namespaces=NS) for e in root.findall("a:entry", NS)]
-    assert "Home" not in titles
-    assert "Watched" not in titles and "Favorites" not in titles
-    assert "Popular" in titles
-    assert "Search" in titles
-    assert any(t.startswith("Toplist") for t in titles)
+    assert titles == [
+        "昨日最佳", "月度精选", "年度佳作", "本周热门", "最新上传",
+        "中文同人", "历史总榜", "日文原版", "Search",
+    ]
     # no extension markers in v1.2 entries
     body = r.text
     assert "showcase" not in body and "extensions" not in body
@@ -291,13 +351,21 @@ async def test_opds_v12_home_no_auth(tmp_path):
 
 @pytest.mark.asyncio
 async def test_opds_v12_home_with_auth(tmp_path):
+    from lxml import etree
+
     settings = _settings()
     service = EHService(settings)
     _install_app_state(settings, service)
 
     r = await _get("/opds/v1.2")
     assert r.status_code == 200
-    assert "Watched" in r.text and "Favorites" in r.text
+    root = etree.fromstring(r.content)
+    NS = {"a": "http://www.w3.org/2005/Atom"}
+    titles = [e.findtext("a:title", namespaces=NS) for e in root.findall("a:entry", NS)]
+    # auth-gated 我的收藏 (favorites) appears; exactly one Search entry
+    # (regression: the Search link used to be appended twice)
+    assert "我的收藏" in titles
+    assert titles.count("Search") == 1
 
 
 @pytest.mark.asyncio
@@ -311,7 +379,6 @@ async def test_opds_v12_toplist_route(tmp_path, monkeypatch):
         "toplist_galleries",
         _async_value(GalleryPageInfo(galleries=[_item(7, "Ranked")], next_page=2)),
     )
-    monkeypatch.setattr(service, "get_metadatas", _async_value([]))
     _install_app_state(settings, service)
 
     r = await _get("/opds/v1.2/toplist?period=year")
@@ -330,3 +397,211 @@ async def test_opds_v12_toplist_route(tmp_path, monkeypatch):
 
     r = await _get("/opds/v1.2/toplist?period=bogus")
     assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# browsing never touches gdata (traditional-crawler mode)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_opds2_gallery_browse_never_calls_gdata(tmp_path, monkeypatch):
+    """Browsing renders from list-page data only: even if gdata explodes,
+    the gallery feed still returns entries with the list-page extension
+    subset (category), never the gdata-only keys."""
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(
+        service,
+        "search_galleries",
+        _async_value(
+            GalleryPageInfo(galleries=[_item(1, "[Author] One")], next_gid=999)
+        ),
+    )
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called while browsing")
+
+    monkeypatch.setattr(service, "get_metadatas", boom)
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0/gallery")
+    assert r.status_code == 200
+    doc = r.json()
+    pubs = doc["publications"]
+    assert len(pubs) == 1
+    md = pubs[0]["metadata"]
+    assert md["title"] == "One"
+    assert md["numberOfPages"] == 10
+    ext = md["extensions"]
+    assert ext["category"] == "Manga"
+    assert "titleJpn" not in ext and "sizeBytes" not in ext
+    assert "uploader" not in ext
+
+
+@pytest.mark.asyncio
+async def test_opds_v12_gallery_browse_never_calls_gdata(tmp_path, monkeypatch):
+    from lxml import etree
+
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(
+        service,
+        "search_galleries",
+        _async_value(
+            GalleryPageInfo(galleries=[_item(1, "[Author] One")], next_gid=999)
+        ),
+    )
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called while browsing")
+
+    monkeypatch.setattr(service, "get_metadatas", boom)
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v1.2/gallery")
+    assert r.status_code == 200
+    root = etree.fromstring(r.content)
+    NS = {"a": "http://www.w3.org/2005/Atom"}
+    titles = [
+        e.findtext("a:title", namespaces=NS)
+        for e in root.findall("a:entry", NS)
+    ]
+    assert titles == ["One"]
+
+
+@pytest.mark.asyncio
+async def test_get_thumb_url_uses_cover_cache_not_gdata(tmp_path, monkeypatch):
+    """Thumbnail resolution prefers the cover cache written by list parses
+    and never falls back to gdata."""
+    service = EHService(_settings(cache_dir=tmp_path))
+    await service.mem.set("cover:1:tok1", "https://ehgt.org/t/1.jpg", 3600)
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called for thumbs")
+
+    monkeypatch.setattr(service, "get_metadata", boom)
+    url = await service.get_thumb_url(1, "tok1")
+    assert url == "https://ehgt.org/t/1.jpg"
+
+
+@pytest.mark.asyncio
+async def test_get_thumb_url_falls_back_to_detail_page(tmp_path, monkeypatch):
+    """Cold cover cache: first thumbnail of the detail page (1 HTML request),
+    still without touching gdata."""
+    from app.eh.models import DetailPageInfo, GalleryThumbnail
+
+    service = EHService(_settings(cache_dir=tmp_path))
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called for thumbs")
+
+    monkeypatch.setattr(service, "get_metadata", boom)
+
+    async def fake_detail(gid, token, page_index):
+        return DetailPageInfo(
+            image_no_from=0,
+            image_no_to=0,
+            image_count=1,
+            current_page_no=1,
+            page_count=1,
+            thumbnails=[
+                GalleryThumbnail(
+                    href="/s/x/2-1",
+                    thumb_url="https://ehgt.org/t/2.jpg",
+                    page_no=1,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(service, "get_detail_page", fake_detail)
+    url = await service.get_thumb_url(2, "tok2")
+    assert url == "https://ehgt.org/t/2.jpg"
+
+
+# --------------------------------------------------------------------------
+# detail documents render from detail-page HTML (zero gdata)
+# --------------------------------------------------------------------------
+
+def _detail(gid: int, token: str = "tok1") -> "DetailPageInfo":
+    from app.eh.models import DetailPageInfo
+
+    return DetailPageInfo(
+        image_no_from=0,
+        image_no_to=0,
+        image_count=42,
+        current_page_no=1,
+        page_count=3,
+        title=f"[Author] Gallery {gid}",
+        title_jpn="テスト",
+        category="Manga",
+        cover_url="https://ehgt.org/t/x.jpg",
+        rating=4.5,
+        uploader="up1",
+        publish_time="2026-08-12 13:11",
+        language="chinese",
+        filesize_text="12.34 MB",
+        torrent_count=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_opds_v12_chapter_feed_from_detail_html(tmp_path, monkeypatch):
+    """v1.2 /chapters renders from the detail page (no gdata); the page-URL
+    mapping is pre-warmed so the first /stream hits cache."""
+    from lxml import etree
+
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(service, "get_detail_page", _async_value(_detail(1)))
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called for detail documents")
+
+    monkeypatch.setattr(service, "get_metadata", boom)
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v1.2/gallery/1/tok1/chapters")
+    assert r.status_code == 200
+    root = etree.fromstring(r.content)
+    NS = {"a": "http://www.w3.org/2005/Atom"}
+    entry = root.find("a:entry", NS)
+    assert entry.findtext("a:title", namespaces=NS) == "Chapter 1: Gallery 1"
+    assert entry.findtext("a:author/a:name", namespaces=NS) == "Author"
+    cat = entry.find("a:category", NS)
+    assert cat.get("term") == "Manga"
+    stream = [
+        l for l in entry.findall("a:link", NS)
+        if l.get("rel") == "http://vaemendis.net/opds-pse/stream"
+    ]
+    assert stream[0].get("{http://vaemendis.net/opds-pse/ns}count") == "42"
+
+
+@pytest.mark.asyncio
+async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
+    """v2.0 single-publication document renders full extensions from the
+    detail page (titleJpn/sizeBytes/rating/uploader), no gdata."""
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(service, "get_detail_page", _async_value(_detail(1)))
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called for detail documents")
+
+    monkeypatch.setattr(service, "get_metadata", boom)
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0/gallery/1/tok1")
+    assert r.status_code == 200
+    doc = r.json()
+    md = doc["publications"][0]["metadata"]
+    assert md["title"] == "Gallery 1"
+    assert md["language"] == ["chinese"]
+    assert md["numberOfPages"] == 42
+    assert md["published"] == "2026-08-12T13:11:00Z"
+    ext = md["extensions"]
+    assert ext["rating"] == 4.5
+    assert ext["titleJpn"] == "テスト"
+    assert ext["uploader"] == "up1"
+    assert ext["sizeBytes"] == 12939427  # 12.34 MB
+    assert ext["category"] == "Manga"
+    assert "expunged" not in ext

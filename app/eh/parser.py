@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from lxml import html
@@ -66,6 +67,19 @@ _PAGECOUNT_SELECTORS = [
 # (JHenTai _parse*GalleryPageCount): thumbnail/compact use the 2nd div,
 # extended the 5th (.gl3e children: category/date/rating/uploader/N pages/torrents).
 _PAGECOUNT_INDEX = {"thumbnail": 1, "compact": 1, "extended": 4}
+
+# Publish-time text selectors per view (JHenTai `publishTime`): the element
+# carrying the posted timestamp inside each gallery row. Format on real pages:
+# `2026-08-12 13:11` (site-local wall clock).
+_PUBLISH_SELECTORS = {
+    "thumbnail": ".gl5t > div > div[id]",
+    "compact": ".gl2c > div:nth-child(2) > [id]",
+    "extended": ".gl3e > div[id]",
+    "minimal": ".gl2m > div:nth-child(2)",
+}
+
+# Recognised publish-time formats; the first match wins.
+_PUBLISH_DT_FORMATS = ("%Y-%m-%d %H:%M", "%d %B %Y, %H:%M", "%d %b %Y, %H:%M")
 
 
 def _el(root: Any, css: str) -> Any | None:
@@ -126,6 +140,61 @@ def _parse_tag_style(style: str) -> TagStyle | None:
     return st
 
 
+def parse_publish_time_iso(text: str) -> str:
+    """Parse a list-page publish-time string into an ISO-8601 UTC timestamp.
+
+    Real pages render ``2026-08-12 13:11`` (site-local wall clock); treated as
+    UTC for stability so the same gallery always yields the same ``updated``
+    across requests. Returns "" when the format is unrecognised.
+    """
+    if not text:
+        return ""
+    for fmt in _PUBLISH_DT_FORMATS:
+        try:
+            dt = datetime.strptime(text.strip(), fmt)
+        except ValueError:
+            continue
+        return dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ""
+
+
+def _parse_list_rating(row: Any) -> float:
+    """Parse the 0-5 star rating from the `.ir` sprite background-position.
+
+    Mirrors JHenTai `_parseGalleryRating`: x offset -16px per star, y offset
+    -21px marks a half star. e.g. ``background-position:-32px -21px`` → 2.5.
+    """
+    style = _attr(_first(row, ".ir"), "style")
+    if not style:
+        return 0.0
+    offsets = re.findall(r"-?\d+px", style)
+    if len(offsets) < 2:
+        return 0.0
+    try:
+        x = int(offsets[0].removesuffix("px"))
+        y = int(offsets[1].removesuffix("px"))
+    except ValueError:
+        return 0.0
+    rating = 5 - (-x) / 16 - (0.5 if y == -21 else 0)
+    return round(max(0.0, rating), 2)
+
+
+def _parse_list_publish_time(row: Any, view: str) -> str:
+    """Publish-time text from the row's posted element (layout dependent)."""
+    sel = _PUBLISH_SELECTORS.get(view)
+    if not sel:
+        return ""
+    return _text(_first(row, sel))
+
+
+def _list_language(tags: list[GalleryTag]) -> str:
+    """First non-translated language tag (mirrors GalleryMetadata.language)."""
+    for t in tags:
+        if t.namespace == "language" and t.key != "translated":
+            return t.key
+    return ""
+
+
 def _parse_list_tags(row: Any, view: str) -> list[GalleryTag]:
     """Parse tag divs from one list row.
 
@@ -165,6 +234,80 @@ def _parse_list_tags(row: Any, view: str) -> list[GalleryTag]:
             )
         )
     return out
+
+
+def _detail_gdd_map(doc: Any) -> dict[str, str]:
+    """Label → value map from the `#gdd` metadata table.
+
+    Matches by the `.gdt1` label text instead of fixed row indices: real pages
+    vary (Posted/Parent/Visible/Language/File Size/Length/...), expunged
+    galleries drop rows, and categories add/remove Artist rows.
+    """
+    out: dict[str, str] = {}
+    for tr in _el(doc, "#gdd table tr"):
+        label = _text(_first(tr, ".gdt1")).strip().rstrip(":")
+        value = _text(_first(tr, ".gdt2")).strip()
+        if label:
+            out[label] = value
+    return out
+
+
+_SIZE_UNITS = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+
+
+def _parse_size_text(text: str) -> int:
+    """Parse a human file size ('189.3 MiB' / '12.34 MB' / '1.5 GB') → bytes.
+
+    Returns 0 when the text is empty or unparsable.
+    """
+    m = re.match(r"\s*([\d.]+)\s*([KMGTP]?)[iI]?B", text or "", re.I)
+    if not m:
+        return 0
+    try:
+        value = float(m.group(1))
+    except ValueError:
+        return 0
+    unit = m.group(2).upper()
+    return int(value * _SIZE_UNITS.get(unit, 1))
+
+
+def _parse_torrent_count(doc: Any) -> int:
+    """Torrent count from the #gd5 footer ('Torrent Download (0)')."""
+    text = _text(_first(doc, "#gd5"))
+    m = re.search(r"Torrent[^)]*\((\d+)\)", text or "")
+    return int(m.group(1)) if m else 0
+
+
+def _parse_detail_metadata(doc: Any) -> dict:
+    """Scrape gallery metadata from the detail page (JHenTai-aligned).
+
+    The detail page already carries everything gdata offers (title, Japanese
+    title, category, cover, rating, uploader, publish time, language, file
+    size, torrents, expunged); parsing it means the detail OPDS document
+    never needs the ehapi.
+    """
+    gdd = _detail_gdd_map(doc)
+    cover_url = ""
+    cover_style = _attr(_first(doc, "#gd1 > div"), "style")
+    m = _URL_RE.search(cover_style)
+    if m:
+        cover_url = m.group(1)
+    language = gdd.get("Language", "")
+    if language:
+        language = language.split()[0].lower()  # "Chinese \xa0TR" → "chinese"
+    return {
+        "title": _text(_first(doc, "#gn")),
+        "title_jpn": _text(_first(doc, "#gj")),
+        "category": _text(_first(doc, "#gdc > .cs")) or _text(_first(doc, "#gdc .cs")),
+        "cover_url": cover_url,
+        "rating": _parse_list_rating(doc),  # #rating_image.ir shares the sprite
+        "uploader": _text(_first(doc, "#gdn > a")),
+        "publish_time": gdd.get("Posted", ""),
+        "language": language,
+        "filesize_text": gdd.get("File Size", ""),
+        "torrent_count": _parse_torrent_count(doc),
+        "expunged": any("Expunged" in v for v in gdd.values()),
+    }
 
 
 def _parse_detail_tags(root: Any) -> list[GalleryTag]:
@@ -243,6 +386,7 @@ def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
 
     is_expunged = _first(row, ".glink s") is not None
 
+    tags = _parse_list_tags(row, view)
     return GalleryListItem(
         gid=gallery_url.gid,
         token=gallery_url.token,
@@ -250,8 +394,11 @@ def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
         category=category,
         cover_url=cover_url,
         page_count=page_count,
+        rating=_parse_list_rating(row),
+        publish_time=_parse_list_publish_time(row, view),
+        language=_list_language(tags),
         is_expunged=is_expunged,
-        tags=_parse_list_tags(row, view),
+        tags=tags,
     )
 
 
@@ -516,6 +663,7 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
     if cur is not None and _text(cur).isdigit():
         current_page_no = int(_text(cur))
 
+    meta = _parse_detail_metadata(doc)
     return DetailPageInfo(
         image_no_from=image_no_from,
         image_no_to=image_no_to,
@@ -524,6 +672,17 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
         page_count=page_count,
         thumbnails=thumbnails,
         tags=_parse_detail_tags(doc),
+        title=meta["title"],
+        title_jpn=meta["title_jpn"],
+        category=meta["category"],
+        cover_url=meta["cover_url"],
+        rating=meta["rating"],
+        uploader=meta["uploader"],
+        publish_time=meta["publish_time"],
+        language=meta["language"],
+        filesize_text=meta["filesize_text"],
+        torrent_count=meta["torrent_count"],
+        expunged=meta["expunged"],
     )
 
 

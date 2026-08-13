@@ -61,27 +61,24 @@ class Settings:
     cache_dir: Path = field(default_factory=lambda: Path("./cache"))
     cache_max_gb: float = 4.0
     image_cache_enabled: bool = True
-    metadata_ttl_seconds: int = 3600
+    metadata_ttl_seconds: int = 600  # gdata results; browsing never touches gdata
     page_url_ttl_seconds: int = 3600
     list_cache_ttl_seconds: int = 600  # list-page parse results (search/popular/toplist...)
 
     # --- List page display mode ---
-    # E-Hentai list pages support four views (Thumbnail / Extended / Compact /
-    # Minimal). Compact and Extended carry the full tag set; Thumbnail shows
-    # only featured tags; Minimal shows none. The server forces this layout on
-    # every list request via ``inline_set`` so it always receives the richest
-    # parseable content, regardless of the user's web browser default.
-    # Accepted values: "extended" (default), "compact", "minimal", "thumbnail".
-    # Mapped to inline_set keys: dm_e / dm_c / dm_m / dm_t.
+    # Fixed to the Extended layout (the richest parseable view: full tag set,
+    # rating sprite, publish time, uploader, page count). Extended is forced on
+    # every list request via ``inline_set=dm_e``; LIST_LAYOUT is intentionally
+    # no longer configurable so browsing metadata never degrades.
     list_layout: str = "extended"
 
     # --- uconfig profile isolation ---
-    # Optional: name of a dedicated E-Hentai settings profile created on
-    # uconfig.php. When set, the service creates (once) and switches to this
-    # profile during ``establish_session``, isolating the service's uconfig
-    # preferences (layout, language, exclusions) from the user's browser
-    # profile. Leave empty to only use per-request ``inline_set`` overrides.
-    eh_profile: str = ""
+    # The service defaults to a dedicated E-Hentai settings profile named
+    # "PandaOPDS" (created once, then switched to during ``establish_session``),
+    # isolating the service's uconfig preferences from the user's browser
+    # profile. Override the name via EH_PROFILE, or set EH_PROFILE="" to
+    # disable profiles and rely on the per-request ``inline_set`` override.
+    eh_profile: str = "PandaOPDS"
 
     # --- Home navigation (TOML-driven layout) ---
     # Path to a TOML file declaring ``[[group]]`` and ``[[navigation]]``
@@ -161,19 +158,17 @@ class Settings:
     # --- validation ---
     @property
     def inline_set_key(self) -> str:
-        """The ``inline_set`` query parameter value matching ``list_layout``."""
-        _map = {"extended": "dm_e", "compact": "dm_c", "minimal": "dm_m", "thumbnail": "dm_t"}
-        return _map.get(self.list_layout, "dm_e")
+        """The ``inline_set`` query parameter value for the list layout.
+
+        Fixed to Extended (dm_e): it exposes the full tag set, rating sprite,
+        publish time and page count — the metadata browsing relies on.
+        """
+        return "dm_e"
 
     def validate(self) -> None:
         if self.eh_site not in _SITE_HOSTS:
             raise ConfigError(
                 f"EH_SITE must be one of {list(_SITE_HOSTS)}, got {self.eh_site!r}"
-            )
-        if self.list_layout not in ("extended", "compact", "minimal", "thumbnail"):
-            raise ConfigError(
-                f"LIST_LAYOUT must be one of extended/compact/minimal/thumbnail, "
-                f"got {self.list_layout!r}"
             )
         # IPB cookies are optional: without them the server still serves public
         # content (Latest/Popular/Toplist/Search) and simply omits the auth-only
@@ -252,11 +247,10 @@ def load_settings() -> Settings:
         cache_dir=Path(os.getenv("CACHE_DIR", "./cache")),
         cache_max_gb=_gb(os.getenv("CACHE_MAX_GB"), 4.0),
         image_cache_enabled=_bool(os.getenv("IMAGE_CACHE_ENABLED"), True),
-        metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 3600),
+        metadata_ttl_seconds=_int(os.getenv("METADATA_TTL_SECONDS"), 600),
         page_url_ttl_seconds=_int(os.getenv("PAGE_URL_TTL_SECONDS"), 3600),
         list_cache_ttl_seconds=_int(os.getenv("LIST_CACHE_TTL_SECONDS"), 600),
-        list_layout=os.getenv("LIST_LAYOUT", "extended").strip().lower(),
-        eh_profile=os.getenv("EH_PROFILE", "").strip(),
+        eh_profile=os.getenv("EH_PROFILE", "PandaOPDS").strip(),
         home_config_path=Path(os.getenv("HOME_CONFIG", "./config/home.toml")),
         facets=_facets(os.getenv("FACETS")),
     )

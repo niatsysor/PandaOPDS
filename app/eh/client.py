@@ -237,6 +237,8 @@ class EHClient:
                 else:
                     resp = await self._client.request(method, url, **kwargs)
                     self._check_failure(resp)
+                logger.debug("EH outbound: %s %s%s", method, url,
+                             ("?" + "&".join(f"{k}={v}" for k, v in params.items()) if params else ""))
                 return resp
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 # network-level error: retry (idempotent GET/POST to api)

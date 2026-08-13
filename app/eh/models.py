@@ -150,6 +150,7 @@ class GalleryListItem:
     page_count: int | None = None
     rating: float = 0.0
     publish_time: str = ""
+    language: str = ""  # from list-page tags (empty when layout lacks tags)
     is_expunged: bool = False
     # Tags parsed from the list page (layout dependent: compact/extended carry
     # the full set, thumbnail only featured tags, minimal none). Featured tags
@@ -176,7 +177,12 @@ class GalleryPageInfo:
 
 @dataclass
 class DetailPageInfo:
-    """Parsed detail page: thumbnail URLs + page range info."""
+    """Parsed detail page: thumbnail URLs + page range info.
+
+    Also carries the gallery metadata scraped from the same HTML page
+    (#gn/#gj/#gdd/#gdn/#grt2...) so the detail OPDS document needs no gdata:
+    the detail page is already fetched by /stream anyway (1 req serves 20).
+    """
 
     image_no_from: int  # 0-based inclusive
     image_no_to: int    # 0-based inclusive
@@ -186,6 +192,18 @@ class DetailPageInfo:
     thumbnails: list[GalleryThumbnail] = field(default_factory=list)
     # Full tag list from the #taglist block (all tags, with status + style).
     tags: list[GalleryTag] = field(default_factory=list)
+    # --- metadata scraped from the same page (JHenTai detailPage2Gallery...) ---
+    title: str = ""          # #gn
+    title_jpn: str = ""      # #gj (empty when no Japanese title)
+    category: str = ""       # #gdc > .cs
+    cover_url: str = ""      # #gd1 > div style url(...)
+    rating: float = 0.0      # #rating_image.ir sprite
+    uploader: str = ""       # #gdn > a
+    publish_time: str = ""   # #gdd Posted row
+    language: str = ""       # #gdd Language row (normalised lowercase)
+    filesize_text: str = ""  # #gdd File Size row (e.g. "189.3 MiB")
+    torrent_count: int = 0   # #gd5 torrent link count
+    expunged: bool = False   # any #gdd value contains "Expunged"
 
 
 @dataclass

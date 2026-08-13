@@ -1,12 +1,12 @@
 # PandaOPDS
 
-**OPDS-PSE 串流服务器**：E-Hentai.org 的中转代理，输出 **OPDS 1.2（Atom）** 与 **OPDS 2.0（JSON）** 双版本目录 + OPDS-PSE 串流链接，服务自研阅读器客户端（对标 Panels）。
+**OPDS-PSE 串流服务器**：E-Hentai 的中转代理，输出 **OPDS 1.2（Atom）** 与 **OPDS 2.0（JSON）** 双版本目录 + OPDS-PSE 串流链接，可用于任何支持 OPDS-PSE 的漫画阅读器。
 
 技术栈：Python 3.11+ / FastAPI / uvicorn / httpx / lxml。单进程异步，Docker 单机部署。
 
 ## 快速开始
 
-### 1. 配置 Cookie（必需）
+### 1. 配置 Cookie
 
 登录 e-hentai.org 后从浏览器 cookie 中取 `ipb_member_id` 与 `ipb_pass_hash`：
 

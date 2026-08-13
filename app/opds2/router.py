@@ -12,7 +12,13 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from ..eh.models import GalleryListItem, GalleryMetadata, GalleryPageInfo, GalleryTag
+from ..eh.models import (
+    DetailPageInfo,
+    GalleryListItem,
+    GalleryPageInfo,
+    GalleryTag,
+)
+from ..eh.parser import _parse_size_text, parse_publish_time_iso
 from ..eh.service import EHService
 from ..eh.title_parser import parse_title_authors
 from ..home_config import (
@@ -52,14 +58,6 @@ def _builder(request: Request) -> Opds2Builder:
     return Opds2Builder(request.app.state.settings)
 
 
-def _all_tags(meta: GalleryMetadata) -> list[GalleryTag]:
-    """Flatten the gdata tag groups (namespace -> [tags]) in order."""
-    out: list[GalleryTag] = []
-    for group in meta.tags.values():
-        out.extend(group)
-    return out
-
-
 # Namespaces that should appear in the standard `subject` array.
 # These are the content-rating / target-audience dimensions that generic
 # OPDS clients can meaningfully consume.  All other tags are available in
@@ -81,27 +79,6 @@ def _flatten_subjects(tags: list[GalleryTag]) -> list[str]:
     return out
 
 
-def _merge_tags(
-    base: list[GalleryTag], overlay: list[GalleryTag]
-) -> list[GalleryTag]:
-    """Overlay list/detail-page tag status+style onto gdata tags.
-
-    Matches by (namespace, key); gdata is the full set, the overlay carries
-    featured-tag styles. New GalleryTag objects are built so cached metadata
-    objects are never mutated.
-    """
-    if not overlay:
-        return list(base)
-    by_key = {(t.namespace, t.key): t for t in overlay}
-    out: list[GalleryTag] = []
-    for t in base:
-        o = by_key.get((t.namespace, t.key))
-        if o is not None and (o.status != "confidence" or o.style):
-            t = GalleryTag(t.namespace, t.key, o.status, o.style)
-        out.append(t)
-    return out
-
-
 def _sort_tags(tags: list[GalleryTag]) -> list[GalleryTag]:
     """Stable sort: highlighted tags (with style) first, matching EH web display."""
     return sorted(tags, key=lambda t: t.style is None)
@@ -117,57 +94,74 @@ def _tag_payload(t: GalleryTag) -> dict:
     return item
 
 
-def _extensions(meta: GalleryMetadata, tags: list[GalleryTag]) -> dict:
+def _detail_extensions(detail: DetailPageInfo, tags: list[GalleryTag]) -> dict:
     """Single private-extension bucket consumed by the first-party client.
 
-    Standard fields stay out: rating, original title, Japanese title,
-    uploader, category, size, expunged and the full tag payload
-    (namespace/status/style) all live here.
+    Scraped from the detail page (gdata-equivalent): rating, Japanese title,
+    uploader, size, expunged, category and the full #taglist tags
+    (namespace/status/style). Standard fields stay out.
     """
     ext: dict = {}
-    if meta.rating:
-        ext["rating"] = meta.rating
-    ext["originalTitle"] = meta.title
-    if meta.title_jpn:
-        ext["titleJpn"] = meta.title_jpn
-    ext["uploader"] = meta.uploader or ""
-    if meta.filesize:
-        ext["sizeBytes"] = meta.filesize
-    if meta.expunged:
+    if detail.rating:
+        ext["rating"] = detail.rating
+    if detail.title_jpn:
+        ext["titleJpn"] = detail.title_jpn
+    if detail.uploader:
+        ext["uploader"] = detail.uploader
+    if detail.filesize_text:
+        size = _parse_size_text(detail.filesize_text)
+        if size:
+            ext["sizeBytes"] = size
+    if detail.expunged:
         ext["expunged"] = True
-    ext["category"] = meta.category
+    if detail.category:
+        ext["category"] = detail.category
     if tags:
         ext["tags"] = [_tag_payload(t) for t in tags]
     return ext
 
 
+def _item_modified(item: GalleryListItem) -> str:
+    """`modified` from the list page's publish time; else now."""
+    return _detail_modified(item.publish_time)
+
+
+def _detail_modified(publish_time: str) -> str:
+    """ISO `modified` from a publish-time string; fall back to now."""
+    if publish_time:
+        iso = parse_publish_time_iso(publish_time)
+        if iso:
+            return iso
+    return _iso()
+
+
 def _publication(
     builder: Opds2Builder,
     item: GalleryListItem,
-    meta: GalleryMetadata | None,
 ) -> dict:
-    raw_title = meta.title if meta and meta.title else item.title
-    modified = _iso(meta.posted) if meta and meta.posted else _iso()
-    page_count = meta.filecount if meta and meta.filecount else item.page_count
-    language = meta.language if meta else ""
+    """One publication object rendered purely from list-page HTML data.
 
-    # Parse authors from title; use the clean title as the display title.
-    if meta:
-        clean_title, authors = parse_title_authors(raw_title, meta.category)
-    else:
-        clean_title = raw_title
-        authors = []
+    Browsing feeds never call the ehapi; extensions carry only what the list
+    page exposed (category, rating, tags). The client opens the detail
+    document for full metadata.
+    """
+    category = item.category
+    modified = _item_modified(item)
+    page_count = item.page_count
+    language = item.language
 
-    subjects: list[str] | None = None
-    extensions: dict | None = None
-    if meta:
-        all_tags = _all_tags(meta)
-        # overlay featured-tag styles parsed from the list page (layout
-        # dependent: compact/extended full, thumbnail featured-only, minimal
-        # none) onto the gdata tag set
-        merged = _sort_tags(_merge_tags(all_tags, item.tags))
-        subjects = _flatten_subjects(merged)
-        extensions = _extensions(meta, merged)
+    clean_title, authors = parse_title_authors(item.title, category)
+
+    tags = _sort_tags(list(item.tags))
+    subjects = _flatten_subjects(tags)
+    ext: dict = {}
+    if item.rating:
+        ext["rating"] = item.rating
+    if item.category:
+        ext["category"] = item.category
+    if tags:
+        ext["tags"] = [_tag_payload(t) for t in tags]
+    extensions = ext or None
 
     return builder.publication(
         gid=item.gid,
@@ -227,23 +221,7 @@ async def root_feed(request: Request):
         else:
             fetched[id(section)] = result
 
-    # Phase 2 — batch gdata metadata.
-    meta_by_gid: dict[int, GalleryMetadata] = {}
-    if fetched:
-        all_gids: dict[tuple[int, str], None] = {}
-        for section in pub_sections:
-            if id(section) in fetched:
-                for item in fetched[id(section)].galleries[: section.count]:
-                    all_gids.setdefault((item.gid, item.token))
-        if all_gids:
-            try:
-                metas = await service.get_metadatas(list(all_gids))
-            except Exception as exc:
-                logger.warning("home metadata batch error: %s", exc)
-                metas = []
-            meta_by_gid = {m.gid: m for m in metas}
-
-    # Phase 3 — collect sections by group; preserve insertion order.
+    # Phase 2 — collect sections by group; preserve insertion order.
     grouped: dict[str, list[Section]] = {}   # group_id → sections
     ungrouped: list[Section] = []            # sections without group (in order)
     for s in sections:
@@ -252,7 +230,7 @@ async def root_feed(request: Request):
         else:
             ungrouped.append(s)
 
-    # Phase 4 — walk ungrouped sections in TOML order; emit named groups
+    # Phase 3 — walk ungrouped sections in TOML order; emit named groups
     # at the position of their first referencing section (we approximate
     # by emitting them before ungrouped when they share a position, which
     # is fine since named groups are declared separately).
@@ -285,7 +263,7 @@ async def root_feed(request: Request):
             if s.kind == "publication" and id(s) in fetched:
                 items = fetched[id(s)].galleries[: s.count]
                 for item in items:
-                    pubs.append(_publication(builder, item, meta_by_gid.get(item.gid)))
+                    pubs.append(_publication(builder, item))
             elif s.kind == "navigation":
                 navs.append({
                     "title": s.title,
@@ -371,13 +349,7 @@ async def gallery_feed(
         logger.warning("gallery feed upstream error: %s", exc)
         raise
 
-    metas = await service.get_metadatas([(g.gid, g.token) for g in info.galleries])
-    meta_by_gid = {m.gid: m for m in metas}
-
-    publications = [
-        _publication(builder, item, meta_by_gid.get(item.gid))
-        for item in info.galleries
-    ]
+    publications = [_publication(builder, item) for item in info.galleries]
 
     next_href = None
     if info.next_gid:
@@ -442,15 +414,7 @@ async def toplist_feed(
         logger.warning("toplist feed upstream error: %s", exc)
         raise
 
-    metas = await service.get_metadatas(
-        [(g.gid, g.token) for g in info.galleries]
-    )
-    meta_by_gid = {m.gid: m for m in metas}
-
-    publications = [
-        _publication(builder, item, meta_by_gid.get(item.gid))
-        for item in info.galleries
-    ]
+    publications = [_publication(builder, item) for item in info.galleries]
 
     next_href = None
     if info.next_page:
@@ -475,40 +439,32 @@ async def toplist_feed(
 
 @router.get("/gallery/{gid}/{token}", response_class=Response)
 async def gallery_detail(request: Request, gid: int, token: str):
+    """Single-publication document rendered from the detail-page HTML.
+
+    Fetching the detail page here pre-warms the page-URL mapping cache so the
+    first /stream request after opening a gallery skips one upstream round
+    trip (fast reader entry). Zero gdata.
+    """
     service = _service(request)
     builder = _builder(request)
 
-    meta = await service.get_metadata(gid, token)
-    if meta is None:
-        raise HTTPException(status_code=404, detail="Gallery not found")
-
-    # Full tag set with featured styles/status comes from the detail page
-    # #taglist block (cached 1h; a cold miss costs one throttled HTML request).
-    # Degrade gracefully to gdata tags when the detail page is unavailable.
-    try:
-        detail = await service.get_detail_page(gid, token, 0)
-        detail_tags = detail.tags
-    except Exception as exc:  # network / parse errors: fall back to gdata
-        logger.warning("detail page unavailable for tags: %s", exc)
-        detail_tags = []
-
-    all_tags = _all_tags(meta)
-    merged = _sort_tags(_merge_tags(all_tags, detail_tags) if detail_tags else all_tags)
-    subjects = _flatten_subjects(merged)
-
-    clean_title, authors = parse_title_authors(meta.title, meta.category)
+    detail = await service.get_detail_page(gid, token, 0)
+    clean_title, authors = parse_title_authors(detail.title, detail.category)
+    modified = _detail_modified(detail.publish_time)
+    tags = _sort_tags(list(detail.tags))
+    subjects = _flatten_subjects(tags)
     pub = builder.publication(
         gid=gid,
         token=token,
         title=clean_title,
-        modified=_iso(meta.posted),
+        modified=modified,
         authors=authors if authors else None,
-        language=meta.language,
-        page_count=meta.filecount,
-        published=_iso(meta.posted),
+        language=detail.language or None,
+        page_count=detail.image_count,
+        published=modified,
         subjects=subjects,
-        number_of_pages=meta.filecount,
-        extensions=_extensions(meta, merged),
+        number_of_pages=detail.image_count,
+        extensions=_detail_extensions(detail, tags),
     )
     content = builder.acquisition_document(
         title=clean_title,

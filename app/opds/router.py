@@ -8,7 +8,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from ..eh.models import GalleryListItem, GalleryMetadata
+from ..eh.models import GalleryListItem
+from ..eh.parser import parse_publish_time_iso
 from ..eh.service import EHService
 from ..eh.title_parser import parse_title_authors
 from ..home_config import (
@@ -57,25 +58,34 @@ def _entry_href(builder: FeedBuilder, gid: int, token: str) -> str:
     return builder.href(f"/opds/v1.2/gallery/{gid}/{token}/chapters")
 
 
+def _updated_from_publish(publish_time: str) -> str:
+    """ISO `updated` from a publish-time string; fall back to now."""
+    if publish_time:
+        iso = parse_publish_time_iso(publish_time)
+        if iso:
+            return iso
+    return _iso()
+
+
+def _item_updated(item: GalleryListItem) -> str:
+    """`updated` from the list page's publish time; fall back to now."""
+    return _updated_from_publish(item.publish_time)
+
+
 def _gallery_entry(
     builder: FeedBuilder,
     item: GalleryListItem,
-    meta: GalleryMetadata | None,
 ) -> FeedEntry:
-    raw_title = meta.title if meta and meta.title else item.title
-    category = meta.category if meta and meta.category else item.category
-    updated = _iso(meta.posted) if meta and meta.posted else _iso()
-    page_count = meta.filecount if meta and meta.filecount else item.page_count
+    """A list entry rendered purely from list-page HTML data (no gdata).
 
-    # Parse authors from title; use clean title as display title.
-    if meta:
-        clean_title, authors = parse_title_authors(raw_title, meta.category)
-    else:
-        clean_title = raw_title
-        authors = []
-
+    Browsing feeds must not call the ehapi: title/category/page-count come
+    from the parsed list row. Full metadata is only fetched when the client
+    opens the detail feed (/chapters).
+    """
+    clean_title, authors = parse_title_authors(item.title, item.category)
     # v1.2 <author> element supports a single name; join multiple authors.
     author = ", ".join(authors) if authors else ""
+    page_count = item.page_count
 
     links = [
         FeedLink(
@@ -104,10 +114,10 @@ def _gallery_entry(
     return FeedEntry(
         id=f"urn:ehentai:gallery:{item.gid}:{item.token}",
         title=clean_title,
-        updated=updated,
+        updated=_item_updated(item),
         author=author,
-        category_term=category,
-        category_label=category,
+        category_term=item.category,
+        category_label=item.category,
         summary="",
         links=links,
     )
@@ -135,9 +145,6 @@ async def root_feed(request: Request):
         if _visible(s.type, s.query):
             href = build_href(type=s.type, query=s.query, base="/opds/v1.2")
             nav.append((s.title, href, s.title))
-
-    # Keep OpenSearch as the last nav entry (protocol-level, not in TOML).
-    nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))
 
     # Keep OpenSearch as the last nav entry (protocol-level, not in TOML).
     nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))
@@ -181,13 +188,7 @@ async def gallery_feed(
         logger.warning("gallery feed upstream error: %s", exc)
         raise
 
-    metas = await service.get_metadatas([(g.gid, g.token) for g in info.galleries])
-    meta_by_gid = {m.gid: m for m in metas}
-
-    entries = [
-        _gallery_entry(builder, item, meta_by_gid.get(item.gid))
-        for item in info.galleries
-    ]
+    entries = [_gallery_entry(builder, item) for item in info.galleries]
 
     next_href = None
     if info.next_gid:
@@ -238,15 +239,7 @@ async def toplist_feed(
         logger.warning("toplist feed upstream error: %s", exc)
         raise
 
-    metas = await service.get_metadatas(
-        [(g.gid, g.token) for g in info.galleries]
-    )
-    meta_by_gid = {m.gid: m for m in metas}
-
-    entries = [
-        _gallery_entry(builder, item, meta_by_gid.get(item.gid))
-        for item in info.galleries
-    ]
+    entries = [_gallery_entry(builder, item) for item in info.galleries]
 
     next_href = None
     if info.next_page:
@@ -272,25 +265,28 @@ async def toplist_feed(
 
 @router.get("/gallery/{gid}/{token}/chapters", response_class=Response)
 async def chapter_feed(request: Request, gid: int, token: str):
+    """Detail feed: rendered from the detail-page HTML (zero gdata).
+
+    Fetching the detail page here also pre-warms the page-URL mapping cache,
+    so the first /stream request after opening a gallery skips one upstream
+    round trip (fast reader entry).
+    """
     service = _service(request)
     builder = _builder(request)
 
-    meta = await service.get_metadata(gid, token)
-    if meta is None:
-        raise HTTPException(status_code=404, detail="Gallery not found")
-
-    clean_title, authors = parse_title_authors(meta.title, meta.category)
+    detail = await service.get_detail_page(gid, token, 0)
+    clean_title, authors = parse_title_authors(detail.title, detail.category)
     author = ", ".join(authors) if authors else ""
     content = builder.chapter_feed(
         gid=gid,
         token=token,
         title=clean_title,
-        updated=_iso(meta.posted),
+        updated=_updated_from_publish(detail.publish_time),
         author=author,
-        category_term=meta.category,
-        category_label=meta.category,
+        category_term=detail.category,
+        category_label=detail.category,
         summary="",
-        filecount=meta.filecount,
+        filecount=detail.image_count,
         thumb_href=f"/image/{gid}/{token}/thumb",
     )
     return Response(

@@ -6,6 +6,7 @@ Run: uvicorn app.main:app --reload --port 8000
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -20,9 +21,14 @@ from .stream.router import router as stream_router
 from .throttle.limiter import CircuitOpenError
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# Keep the low-level HTTP client libraries quiet: they spam connection/TLS
+# debug and duplicate every request as INFO. Outbound URLs are logged by
+# app.eh.client (`EH outbound: ...`) instead.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

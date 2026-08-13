@@ -105,7 +105,17 @@ class EHService:
 
         async def _fetch() -> GalleryPageInfo:
             html_text = await self._html_get(path, params=params)
-            return parse_list_page(html_text)
+            info = parse_list_page(html_text)
+            # Remember covers so thumbnail proxies never need the gdata API:
+            # a list page serves the cover URLs for all its galleries (TTL
+            # outlives the 10min list cache, matching the detail-page cache).
+            cover_ttl = self.settings.page_url_ttl_seconds
+            for g in info.galleries:
+                if g.cover_url:
+                    await self.mem.set(
+                        self._mem_key("cover", g.gid, g.token), g.cover_url, cover_ttl
+                    )
+            return info
 
         return await self.mem.get_or_set(
             key, _fetch, self.settings.list_cache_ttl_seconds
@@ -338,11 +348,16 @@ class EHService:
     # -- thumbnails --------------------------------------------------------
 
     async def get_thumb_url(self, gid: int, token: str) -> str:
-        """Return the thumbnail URL (for a 302 redirect from /image/...)."""
-        meta = await self.get_metadata(gid, token)
-        if meta and meta.thumb:
-            return meta.thumb
-        # fallback: first thumbnail of the detail page
+        """Return the thumbnail URL (for a 302 redirect from /image/...).
+
+        Browsing must not touch the gdata API: the cover URL recorded by the
+        last list-page parse is preferred; a cold miss falls back to the first
+        thumbnail of the cached detail page (1 HTML request serves 20 /stream
+        requests).
+        """
+        cached = await self.mem.get(self._mem_key("cover", gid, token))
+        if cached:
+            return cached
         detail = await self.get_detail_page(gid, token, 0)
         if detail.thumbnails:
             return detail.thumbnails[0].thumb_url

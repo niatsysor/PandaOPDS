@@ -42,15 +42,21 @@ async def test_watched_and_favorites_reuse_list_parser(tmp_path, monkeypatch):
     """watched/favorites galleries reuse the standard list parser (offline)."""
     from pathlib import Path
 
+    fixture = Path(__file__).parent / "fixtures" / "list_page.html"
+    if not fixture.exists():
+        pytest.skip("real HTML fixture not present")
+
     service = EHService(_settings(cache_dir=tmp_path))
-    html = (Path(__file__).parent / "fixtures" / "list_page.html").read_text(
-        encoding="utf-8"
-    )
+    html = fixture.read_text(encoding="utf-8")
 
     async def fake_html_get(path: str, params: dict | None = None) -> str:
         assert path in ("/watched", "/favorites.php")
         if params:
-            assert params == {"next": "42"}
+            # inline_set is always injected (server-forced list layout);
+            # lastGid pagination rides alongside when requested.
+            assert params.get("inline_set") == "dm_e"
+            if params.get("next"):
+                assert params["next"] == "42"
         return html
 
     monkeypatch.setattr(service, "_html_get", fake_html_get)

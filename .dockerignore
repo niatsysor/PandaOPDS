@@ -1,0 +1,39 @@
+# VCS
+.git
+.gitignore
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.pyright
+
+# Environment / secrets
+.env
+.env.*
+
+# Runtime data
+cache
+config
+
+# Tests & docs (not needed in the image)
+tests
+docs
+deploy
+example
+
+# CI / packaging
+.github
+Dockerfile
+docker-compose.yml
+uv.lock
+README.md
+AGENTS.md
+
+# OS
+.DS_Store
