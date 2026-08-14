@@ -18,6 +18,7 @@ from .exceptions import ParseError
 from .languages import map_language
 from .models import (
     DetailPageInfo,
+    GalleryComment,
     GalleryListItem,
     GalleryMetadata,
     GalleryPageInfo,
@@ -43,6 +44,9 @@ _509_URLS = {
     "https://ehgt.org/g/509.gif",
     "https://exhentai.org/img/509.gif",
 }
+# Comment posted-time line, e.g. "Posted on 12 August 2026, 13:11 by: user"
+_COMMENT_POSTED_RE = re.compile(r"Posted\s+on\s+(.+)")
+_COMMENT_SHOWUSER_RE = re.compile(r"showuser=(\d+)")
 
 # --- Tag status filter (global strategy) ---
 # E-Hentai tags carry a community-trust class (gt=confidence, gtl=skepticism,
@@ -392,6 +396,81 @@ def _parse_detail_tags(root: Any) -> list[GalleryTag]:
     return out
 
 
+def _parse_comment_time(text: str) -> str:
+    """Parse the posted-time line into a site-local ``yyyy-MM-dd HH:mm`` string.
+
+    Real pages render ``Posted on 12 August 2026, 13:11 by: user``; output
+    format mirrors JHenTai (DateFormat ``yyyy-MM-dd HH:mm``, site-local wall
+    clock). Returns "" when the format is unrecognised so a malformed comment
+    never breaks the whole detail document.
+    """
+    m = _COMMENT_POSTED_RE.search(text or "")
+    if not m:
+        return ""
+    raw = m.group(1).split(" by:", 1)[0].strip()
+    try:
+        dt = datetime.strptime(raw, "%d %B %Y, %H:%M")
+    except ValueError:
+        return ""
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _parse_detail_comments(root: Any) -> list[GalleryComment]:
+    """Parse the #cdiv comment block (JHenTai ``_parseGalleryDetailsComments``).
+
+    Structure on real pages (one ``.c1`` per comment):
+      <div id="cdiv" class="gm"><a name="c0"></a>
+        <div class="c1">
+          <div class="c2">
+            <div class="c3">Posted on ... by: <a href=...>user</a> ...</div>
+            <div class="c4 nosel">...</div>
+          </div>
+          <div class="c6" id="comment_0">HTML content<br><a href=...>...</a></div>
+          <div class="c7" id="cvotes_0">...</div>
+        </div>...
+      </div>
+    Content is preserved as raw HTML (JHenTai keeps the Element; clients
+    render it). A missing #cdiv yields [].
+    """
+    out: list[GalleryComment] = []
+    for el in _el(root, "#cdiv > .c1"):
+        c3 = _first(el, ".c2 > .c3")
+        c6 = _first(el, ".c6")
+
+        cid = 0
+        m = re.search(r"comment_(\d+)", _attr(c6, "id"))
+        if m:
+            cid = int(m.group(1))
+
+        # username: first anchor in .c3 (the uploader/poster link)
+        username = _text(_first(c3, "a"))
+        # userId from the forums showuser= link (any later anchor)
+        user_id: int | None = None
+        for a in _el(c3, "a")[1:]:
+            m = _COMMENT_SHOWUSER_RE.search(_attr(a, "href"))
+            if m:
+                user_id = int(m.group(1))
+                break
+
+        content_html = ""
+        if c6 is not None:
+            # keep the whole .c6 node (with its id attribute) so clients can
+            # render it directly — JHenTai stores the Element itself
+            content_html = html.tostring(c6, encoding="unicode")
+
+        out.append(
+            GalleryComment(
+                id=cid,
+                username=username,
+                user_id=user_id,
+                time=_parse_comment_time(_text(c3)),
+                last_edit_time=_text(_first(el, ".c8 > strong")),
+                content_html=content_html,
+            )
+        )
+    return out
+
+
 def _parse_cover_url(img: Any | None) -> str:
     if img is None:
         return ""
@@ -734,6 +813,7 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
         filesize_text=meta["filesize_text"],
         torrent_count=meta["torrent_count"],
         expunged=meta["expunged"],
+        comments=_parse_detail_comments(doc),
     )
 
 

@@ -17,7 +17,13 @@ from ..config import Settings
 
 MIME_NAV = "application/opds+json;profile=navigation"
 MIME_ACQ = "application/opds+json;profile=acquisition"
+MIME_PUBLICATION = "application/opds+json"
+MIME_IMAGE = "image/jpeg"
 MIME_THUMB = "image/jpeg"
+
+# RWPM (Web Publication Manifest) context — marks the document as a
+# Readium-compatible publication (consumed by Stump/Divina readers).
+RWPM_CONTEXT = "https://readium.org/webpub-manifest/context.jsonld"
 
 REL_SELF = "self"
 REL_START = "start"
@@ -90,8 +96,12 @@ class Opds2Builder:
     ) -> str:
         """Root navigation document.
 
-        `navigation` items are plain ``{"title", "href", "summary"}`` dicts
-        rendered into the standard ``navigation[]`` array (OPDS 2.0 §2.4).
+        `navigation` items are plain ``{"title", "href"}`` dicts rendered
+        into the standard ``navigation[]`` array (OPDS 2.0 §2.1).  Each
+        entry is a flat Web Publication link object — `title` + `rel`/`href`/
+        `type` on the same level (Komga/Stump-compatible; the nested
+        metadata/links form is NOT the spec shape and breaks strict clients
+        like Stump's zod parser).
 
         `groups` are pre-built group dicts placed in the standard
         ``groups[]`` array (OPDS 2.0 §2.5). Each group carries its own
@@ -105,19 +115,12 @@ class Opds2Builder:
         if navigation:
             for item in navigation:
                 title = item["title"]
-                md: dict = self._metadata(
-                    title, f"urn:ehentai:subsection:{title.lower()}", now
-                )
-                if item.get("summary"):
-                    md["description"] = item["summary"]
                 nav_list.append(
                     {
-                        "metadata": md,
-                        "links": [
-                            self._link(
-                                REL_SUBSECTION, self.href(item["href"]), MIME_ACQ, title
-                            )
-                        ],
+                        "title": title,
+                        "href": self.href(item["href"]),
+                        "rel": REL_SUBSECTION,
+                        "type": MIME_ACQ,
                     }
                 )
 
@@ -215,6 +218,7 @@ class Opds2Builder:
         subjects: list[str] | None = None,
         number_of_pages: int | None = None,
         extensions: dict | None = None,
+        detail_document: bool = False,
     ) -> dict:
         """Build one publication object.
 
@@ -224,11 +228,27 @@ class Opds2Builder:
         category, featured-tag styles, ...) lives in `extensions` — the
         project's single private-extension bucket consumed by the first-party
         client.
+
+        Acquisition link layout is driven by ``settings.opds_acq_mode`` plus
+        ``detail_document`` (True for the detail document itself):
+
+        * list/root publications in ``direct`` mode (default) → the acquisition
+          link points straight at the image stream (image/jpeg,
+          {pageNumber}), so clients read with zero second requests. No
+          acquisition/stream links when page_count is unknown.
+        * list/root publications in ``detail`` mode → the acquisition link
+          points at the detail document (MIME_ACQ) for a second-request flow.
+        * the detail document always exposes a direct image-stream acquisition
+          link (never a self-referencing one) in both modes.
         """
         identifier = f"urn:ehentai:gallery:{gid}:{token}"
         md: dict = {"title": title, "identifier": identifier, "modified": modified}
         if authors:
             md["authors"] = [{"name": n} for n in authors]
+            # RWPM uses the singular `author` (array/object); Komga-style
+            # `authors` is kept for existing clients. Stump/Readium parsers
+            # only look at `author`.
+            md["author"] = [{"name": n} for n in authors]
         if language:
             md["language"] = [language]
         if published:
@@ -248,28 +268,67 @@ class Opds2Builder:
             # Page base is a first-party convention (default 1-based) and no
             # longer travels in link properties.
             page_props = {"numberOfItems": page_count}
-        links = [
-            self._link(
-                REL_ACQUISITION,
-                self.href(f"/opds/v2.0/gallery/{gid}/{token}"),
-                MIME_ACQ,
-                title,
-                properties=page_props,
-            ),
-        ]
-        if page_count:
+        stream_href = self.href(f"/stream/{gid}/{token}/page/{{pageNumber}}")
+        links: list[dict] = []
+        direct = detail_document or self.settings.opds_acq_mode == "direct"
+        if direct:
+            # Acquisition points straight at the image stream: zero-round-trip
+            # reading for clients that only understand standard rels/types.
+            if page_count:
+                links.append(
+                    self._link(
+                        REL_ACQUISITION,
+                        stream_href,
+                        MIME_IMAGE,
+                        title,
+                        properties=page_props,
+                    )
+                )
+            if page_count:
+                links.append(
+                    self._link(
+                        REL_STREAM,
+                        stream_href,
+                        MIME_IMAGE,
+                        properties=page_props,
+                    )
+                )
+        else:
+            # detail mode: acquisition leads to the detail document; the
+            # client performs a second request for full metadata there.
             links.append(
                 self._link(
-                    REL_STREAM,
-                    self.href(f"/stream/{gid}/{token}/page/{{pageNumber}}"),
-                    "image/jpeg",
+                    REL_ACQUISITION,
+                    self.href(f"/opds/v2.0/gallery/{gid}/{token}"),
+                    MIME_ACQ,
+                    title,
                     properties=page_props,
                 )
             )
+            if page_count:
+                links.append(
+                    self._link(
+                        REL_STREAM,
+                        stream_href,
+                        MIME_IMAGE,
+                        properties=page_props,
+                    )
+                )
         # Upstream E-Hentai gallery page: standard `alternate` link (Atom
         # semantics), so clients can share the canonical EH URL without
         # knowing EH_SITE. Appended last — links[0] stays the acquisition
         # link for naive clients.
+        # self link: points at the single-publication document. Clients like
+        # Stump open details by following `rel="self"`; the target document
+        # must be a top-level publication object (RWPM) for their parser.
+        links.append(
+            self._link(
+                REL_SELF,
+                self.href(f"/opds/v2.0/gallery/{gid}/{token}/publication"),
+                MIME_PUBLICATION,
+                title,
+            )
+        )
         links.append(
             self._link(
                 REL_ALTERNATE,
@@ -287,4 +346,26 @@ class Opds2Builder:
                 "type": MIME_THUMB,
             }
         ]
-        return {"metadata": md, "links": links, "images": images}
+        publication: dict = {
+            "context": RWPM_CONTEXT,
+            "metadata": md,
+            "links": links,
+            "images": images,
+        }
+        if detail_document and page_count:
+            # RWPM readingOrder: per-page image URLs so stream readers
+            # (Stump Divina etc.) paginate without extra lookups.
+            publication["readingOrder"] = self._reading_order(gid, token, page_count)
+        return publication
+
+    def _reading_order(self, gid: int, token: str, page_count: int) -> list[dict]:
+        """RWPM readingOrder entries for the image stream, 1 entry per page.
+
+        Page numbers run from ``settings.pse_page_base`` (1 by default) for
+        ``page_count`` pages; the stream route serves each number directly.
+        """
+        base = self.settings.pse_page_base
+        return [
+            {"href": self.href(f"/stream/{gid}/{token}/page/{n}"), "type": MIME_IMAGE}
+            for n in range(base, base + page_count)
+        ]

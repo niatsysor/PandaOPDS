@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from ..eh.models import GalleryListItem
 from ..eh.parser import parse_publish_time_iso
 from ..eh.service import EHService
-from ..eh.title_parser import parse_title_authors
+from ..eh.title_parser import parse_detail_title, parse_title_authors
 from ..home_config import (
     build_href,
     is_auth_required,
@@ -286,7 +286,9 @@ async def chapter_feed(request: Request, gid: int, token: str):
     builder = _builder(request)
 
     detail = await service.get_detail_page(gid, token, 0)
-    clean_title, authors = parse_title_authors(detail.title, detail.category)
+    clean_title, authors = parse_detail_title(
+        detail.title, detail.title_jpn, detail.category
+    )
     author = ", ".join(authors) if authors else ""
     content = builder.chapter_feed(
         gid=gid,

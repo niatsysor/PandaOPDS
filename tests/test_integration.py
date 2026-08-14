@@ -111,6 +111,11 @@ async def test_parser_on_real_fixtures():
         0,
     )
     assert detail.thumbnails
+    # the saved fixture carries one Uploader Comment (gvc051126)
+    assert len(detail.comments) == 1
+    assert detail.comments[0].username == "gvc051126"
+    assert detail.comments[0].time == "2026-08-12 13:11"
+    assert "<a " in detail.comments[0].content_html
 
     img = parse_image_page((FIXTURE_DIR / "image_page.html").read_text(encoding="utf-8"))
     assert not img.is_509 and img.image_url.startswith("http")

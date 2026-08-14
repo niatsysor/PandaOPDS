@@ -163,7 +163,8 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
-| `GET /opds/v2.0/gallery/{gid}/{token}` | 单 publication 文档（acquisition 落点 / 完整元数据入口，对应 v1.2 章节 feed） |
+| `GET /opds/v2.0/gallery/{gid}/{token}` | 单 publication 采集文档（完整元数据入口，对应 v1.2 章节 feed；`detail` 模式下为列表 acquisition 落点，`direct` 模式下列表不暴露、自研客户端由 identifier 拼 URL；其 acquisition 恒指向图片流、不指向自身） |
+| `GET /opds/v2.0/gallery/{gid}/{token}/publication` | 单 publication 文档（**顶层 RWPM publication 对象**，非采集文档）：`context`/`metadata`/`links`/`images`/`readingOrder`；每个 publication 的 `rel="self"` 指向此端点，Stump 等客户端跟随 `self` 打开详情并通过内嵌 `readingOrder`（逐页 `/stream/.../page/{n}`）流式阅读 |
 
 浏览维度 `watched`/`favorites` 复用列表解析器（`parse_list_page`）：`EHService.watched_galleries` → `/watched`，`EHService.favorites_galleries` → `/favorites.php`。
 
@@ -198,15 +199,29 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numberOfItems`（OPDS 2.0 标准属性）表达；页码基数不再传输（默认 1-based，与 LANraragi/Kasane 一致，`PSE_PAGE_BASE=0` 部署由自研客户端带外约定同步）。封面/缩略图按 OPDS 2.0 §2.3 放入顶层 `images` 集合——thumbnail link rel 是 OPDS 1.x 的 links 做法，v2.0 **不输出**（v1.2 Atom 仍用 link rel）。`images` 恒有（缩略图代理零 ehapi，不依赖 gdata）。
 
+**获取模式（`OPDS_ACQ_MODE`，默认 `direct`）**：acquisition link 的指向由部署者按客户端能力配置（与 `PSE_PAGE_BASE` 同类带外约定）：
+
+- `direct`（默认，兼容至上）：列表/首页 publication 的 acquisition **直接指向图片流**（`/stream/{gid}/{token}/page/{pageNumber}`，`type="image/jpeg"`，`properties.numberOfItems`）——客户端点击即读，**零二次请求**；不输出指向详情文档的 acquisition（详情文档仍可访问，自研客户端由 identifier 拼 URL）。
+- `detail`：列表/首页 publication 的 acquisition 指向详情文档（`/opds/v2.0/gallery/{gid}/{token}`，`type="application/opds+json;profile=acquisition"`）——客户端二次请求详情后再读（Panels 风格）。
+- **详情文档自身恒输出直接 image-stream acquisition（两种模式一致），绝不指向自身**（无自循环）。未知页数（无 `page_count`）时 direct 模式不输出 acquisition/stream link；detail 模式保留指向详情文档的 acquisition（无 `numberOfItems`）。
+
+**RWPM/Stump 兼容（所有 publication 恒有）**：
+
+- 顶层 `context` = `https://readium.org/webpub-manifest/context.jsonld`（RWPM 标记）。
+- `links` 含 `rel="self"` → `/opds/v2.0/gallery/{gid}/{token}/publication`（`type="application/opds+json"`）——**Stump 等客户端跟随 `self` 打开详情**（它们的解析器要求 selfURL 返回**顶层 publication 对象**，因此 self 指向单 publication 端点而非采集文档）。
+- `metadata.author`（RWPM 单数）与 `authors` 并存（Stump/Readium 只认 `author`）。
+- `detail_document=True` 时（`/gallery/{gid}/{token}` 与 `/gallery/{gid}/{token}/publication` 返回的 publication）额外内嵌 `readingOrder`：逐页图片 URL（`/stream/{gid}/{token}/page/{n}`，n 从 `PSE_PAGE_BASE` 起，共页数条）——Stump 的 Stream 阅读器据此逐页拉图，零额外查询。
+
 **字段分层约定（本项目核心）**：
 
 - **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`modified`/`published`；`description` 预留、当前不输出），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，`ns:key`，不含分类）：详情文档含完整 taglist（经 status 过滤后的全部标签）；列表 feed 是子集（额外剔除 `language`/`artist`——language 已有独立字段，author 由客户端从文件名解析）。
 - **语言码（BCP 47）**：`metadata.language` 输出 RFC 5646（BCP 47）语言码（`chinese`→`zh`、`chinese (simplified)`→`zh-Hans`、`chinese (traditional)`→`zh-Hant`…），由 `app/eh/languages.py` 映射表统一映射（列表/详情/gdata 三路共用）；未知语言与标记伪标签（`translated`/`rewrite`/`raw`）不输出——原始标签文本仍在详情文档 `subject` 中。搜索语法不受影响：`query=language:chinese` 仍用 EH 原生标签名。
 - **标签 status（社区可信度，全局过滤策略）**：EH 标签带 `gt`(confidence)/`gtl`(skepticism)/`gtw`(incorrect) class（列表页与详情页 `#taglist` 同构）。低于 `TAG_STATUS_FILTER` 等级（`balanced` 默认：confidence+skepticism；`strict`：仅 confidence；`off`：全部）的标签从 **subject 与 mytags 一并剔除**——拒绝模棱两可的标签进入目录。status **不传递给客户端**（服务端消费后即丢弃），客户端无法感知被过滤标签的存在。
-- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`uploader`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
+- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，自研客户端只读它：`rating`、`uploader`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`、`reviews`。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
 - **`extensions.mytags`（列表专属字段，详情不输出）**：仅含**带高亮 style 的标签**（经 status 过滤后），条目 = `namespace`/`key` + `style`（`color`/`borderColor`/`background`，来自列表页 inline style，`!important` 已剥离），**无 status**。语义 = "值得高亮展示的标签"，客户端用它查询高亮样式。详情文档不含 mytags（详情页 `#taglist` 本无高亮 style）——客户端展开详情时**合并**（subject 以详情完整版替换、mytags 保留列表条目继承高亮），勿整体替换重建。
 - **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`mytags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（gdata）。自研客户端必须按字段缺失容忍，完整元数据以详情文档为准（subject 亦以详情完整版为准）。
 - 标签高亮数据来源：列表 feed 的 `mytags` 来自列表页解析的高亮标签（布局固定 extended）；全量标签进 `subject`（列表精简 / 详情完整），二者皆经 `TAG_STATUS_FILTER` 统一过滤，保持子集关系。
+- **`extensions.reviews`（详情专属，v2.0 仅输出；v1.2 纯标准 Atom 不含）**：评论区（详情页 `#cdiv > .c1`，解析器随详情页 HTML 一并提取，零额外上游请求；随 1h 详情页缓存同步过期）。条目 = `id`/`username`/`userId`（可选，无则省略）/`time`/`lastEditTime`（可选）/`content`（**原始 HTML**，含 `.c6` 容器与 id 属性，客户端自行 sanitize 后渲染）。交互状态（fromMe/votedUp/votedDown）与评分详情**不输出**。`COMMENTS_ENABLED=0` 关闭输出（解析仍进行，仅控制序列化）。**链接重写**：`content` 中 E-Hentai 图库链接（`(e-hentai|exhentai).org/(g|mpv)/{gid}/{token}/`，含 `?p=`/锚点）自动重写为 OPDS 2.0 详情链接 `href()`（相对路径 / `PUBLIC_BASE_URL` 绝对）→ `/opds/v2.0/gallery/{gid}/{token}`，锚文本保留原 URL，非图库链接（uploader/forums/外链）原样——app 内点击评论引用图库即可跳转。
 
 ```json
 {
@@ -236,20 +251,27 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
     {"href": "/image/{gid}/{token}/thumb", "type": "image/jpeg"}
   ],
   "links": [
-    {"rel": "http://opds-spec.org/acquisition", "href": "/opds/v2.0/gallery/{gid}/{token}",
-     "type": "application/opds+json;profile=acquisition",
+    {"rel": "http://opds-spec.org/acquisition", "href": "/stream/{gid}/{token}/page/{pageNumber}",
+     "type": "image/jpeg",
      "properties": {"numberOfItems": {filecount}}},
     {"rel": "http://vaemendis.net/opds-pse/stream",
      "href": "/stream/{gid}/{token}/page/{pageNumber}",
      "type": "image/jpeg",
-     "properties": {"numberOfItems": {filecount}}}
+     "properties": {"numberOfItems": {filecount}}},
+    {"rel": "self", "href": "/opds/v2.0/gallery/{gid}/{token}/publication",
+     "type": "application/opds+json", "title": "{title}"},
+    {"rel": "alternate", "href": "https://{e-hentai|exhentai}.org/g/{gid}/{token}/",
+     "type": "text/html", "title": "{site_host}"}
   ]
 }
 ```
 
+（默认 `direct` 模式；`OPDS_ACQ_MODE=detail` 时列表/首页的 acquisition 指向 `/opds/v2.0/gallery/{gid}/{token}`（`type="application/opds+json;profile=acquisition"`）；详情文档自身恒为直接 image-stream acquisition，不指向自身。顶层恒有 `context`（RWPM）；`metadata` 含 `author`（单数，与 `authors` 并存）；详情 publication 额外内嵌 `readingOrder`。）
+
 ### 反代注意事项
 
 - 默认输出**相对路径** href（OPDS 允许，Tachidesk 即如此）；提供 `PUBLIC_BASE_URL` 环境变量（如 `https://opds.example.com`）时输出绝对 URL。
+- **Stump 必须设置 `PUBLIC_BASE_URL`**：Stump 用自身服务器地址解析所有相对链接（`resolveUrl(link.href, sdk.rootURL)`），相对路径会被解析到 Stump 自己而 404；Komga 等输出绝对 URL 的服务器无需此配置。
 - nginx/caddy 负责 TLS/限速/访问控制；正确透传 Host。
 
 ## 架构（FastAPI 分层）

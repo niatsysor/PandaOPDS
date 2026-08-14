@@ -594,6 +594,80 @@ def test_parse_detail_page_metadata_expunged():
     assert info.expunged is True
 
 
+# --------------------------------------------------------------------------
+# detail page — comments (#cdiv)
+# --------------------------------------------------------------------------
+
+DETAIL_COMMENTS_HTML = """
+<html><body>
+<div class="gtb"><div class="gpc">Showing 1 - 20 of 40 images</div></div>
+<div id="gdt" class="gdt">
+  <a href="/s/xyz123/2165080-1"><div style="width: 100px; height: 150px; background: url(https://ehgt.org/t/aa/bb_1.jpg);"></div></a>
+</div>
+<div id="cdiv" class="gm">
+  <a name="c0"></a>
+  <div class="c1">
+    <div class="c2">
+      <div class="c3">Posted on 12 August 2026, 13:11 by: &nbsp; <a href="https://e-hentai.org/uploader/gvc051126">gvc051126</a>&nbsp; &nbsp; <a href="https://forums.e-hentai.org/index.php?showuser=685825">PM</a></div>
+      <div class="c4 nosel"><a name="ulcomment"></a>Uploader Comment</div>
+      <div class="c"></div>
+    </div>
+    <div class="c6" id="comment_0">尝试用BallonsTranslator翻译+修图。<br />原图收集自：<br /><a href="https://e-hentai.org/g/867387/3a0d9903d3/">source link</a></div>
+    <div class="c7" id="cvotes_0" style="display:none"></div>
+  </div>
+  <div class="c1">
+    <div class="c2">
+      <div class="c3">Posted on 1 March 2022, 22:05 by: &nbsp; <a href="https://e-hentai.org/uploader/someuser">someuser</a>&nbsp; &nbsp; <a href="https://forums.e-hentai.org/index.php?showuser=12345">PM</a></div>
+    </div>
+    <div class="c6" id="comment_1">Edited content<br>second line</div>
+    <div class="c8"><strong>10 March 2022, 03:49</strong></div>
+  </div>
+</div>
+</body></html>
+"""
+
+
+def test_parse_detail_comments():
+    info = parse_detail_page(DETAIL_COMMENTS_HTML, "e-hentai.org", 0)
+    assert len(info.comments) == 2
+
+    c0 = info.comments[0]
+    assert c0.id == 0
+    assert c0.username == "gvc051126"
+    assert c0.user_id == 685825
+    assert c0.time == "2026-08-12 13:11"
+    assert c0.last_edit_time == ""
+    # raw HTML preserved (JHenTai keeps the Element)
+    assert 'id="comment_0"' in c0.content_html
+    assert "尝试用BallonsTranslator翻译+修图" in c0.content_html
+    assert 'href="https://e-hentai.org/g/867387/3a0d9903d3/"' in c0.content_html
+
+    c1 = info.comments[1]
+    assert c1.id == 1
+    assert c1.username == "someuser"
+    assert c1.user_id == 12345
+    assert c1.time == "2022-03-01 22:05"
+    assert c1.last_edit_time == "10 March 2022, 03:49"
+    assert "<br>" in c1.content_html
+
+
+def test_parse_detail_comments_missing_cdiv():
+    """Detail pages without a comment block yield an empty list (no throw)."""
+    info = parse_detail_page(DETAIL_META_HTML, "e-hentai.org", 0)
+    assert info.comments == []
+
+
+def test_parse_detail_comments_malformed_time():
+    """An unrecognised posted-time format never breaks the detail parse."""
+    html = DETAIL_COMMENTS_HTML.replace(
+        "Posted on 12 August 2026, 13:11 by:",
+        "Posted on somedate by:",
+    )
+    info = parse_detail_page(html, "e-hentai.org", 0)
+    assert info.comments[0].time == ""
+    assert info.comments[0].username == "gvc051126"
+
+
 def test_parse_size_text():
     from app.eh.parser import _parse_size_text
 
@@ -635,7 +709,7 @@ def test_parse_real_fixture_tags():
 # title parser — parse_title_authors
 # --------------------------------------------------------------------------
 
-from app.eh.title_parser import parse_title_authors
+from app.eh.title_parser import parse_detail_title, parse_title_authors
 
 
 def test_title_parser_simple_author():
@@ -664,7 +738,7 @@ def test_title_parser_circle_and_artist():
         "[Digital Lover (Nakajima Yuka)] DLO-03", "Doujinshi"
     )
     assert clean == "DLO-03"
-    assert authors == ["Digital Lover", "Nakajima Yuka"]
+    assert authors == ["Digital Lover (Nakajima Yuka)"]
 
 
 def test_title_parser_event_prefix():
@@ -673,7 +747,7 @@ def test_title_parser_event_prefix():
         "(C98) [Circle (Artist)] My Doujin Title"
     )
     assert clean == "My Doujin Title"
-    assert authors == ["Circle", "Artist"]
+    assert authors == ["Circle (Artist)"]
 
 
 def test_title_parser_no_brackets():
@@ -702,13 +776,13 @@ def test_title_parser_parens_in_title():
 def test_title_parser_multiple_authors_comma():
     clean, authors = parse_title_authors("[Author1, Author2] Some Title")
     assert clean == "Some Title"
-    assert authors == ["Author1", "Author2"]
+    assert authors == ["Author1, Author2"]
 
 
 def test_title_parser_multiple_authors_jp_sep():
     clean, authors = parse_title_authors("[Author1、Author2] Some Title")
     assert clean == "Some Title"
-    assert authors == ["Author1", "Author2"]
+    assert authors == ["Author1、Author2"]
 
 
 def test_title_parser_whitespace_collapse():
@@ -723,6 +797,44 @@ def test_title_parser_empty_author_bracket():
     clean, authors = parse_title_authors("[] Empty Bracket Title")
     assert clean == "Empty Bracket Title"
     assert authors == []
+
+
+def test_parse_detail_title_prefers_japanese():
+    clean, authors = parse_detail_title(
+        "[Ponkotsu Teikoku] Trans Story ~改造篇~ [Chinese MTL/中文机翻]",
+        "[ポンコツ帝国] トランス・ストーリー ～改造編～[中国翻訳]",
+        "Doujinshi",
+    )
+    assert clean == "トランス・ストーリー ～改造編～"
+    assert authors == ["ポンコツ帝国"]
+
+
+def test_parse_detail_title_falls_back_without_japanese():
+    clean, authors = parse_detail_title(
+        "[No1r] Yor Forger [AI Generated]", "", "Manga"
+    )
+    assert clean == "Yor Forger"
+    assert authors == ["No1r"]
+
+
+def test_parse_detail_title_falls_back_for_marker_only_japanese():
+    """titleJpn is only bracket markers -> treated as missing, default wins."""
+    clean, authors = parse_detail_title(
+        "[No1r] Yor Forger [AI Generated]", "[中国翻訳]", "Doujinshi"
+    )
+    assert clean == "Yor Forger"
+    assert authors == ["No1r"]
+
+
+def test_parse_detail_title_author_bracket_kept_whole():
+    """[Circle (Artist)] stays one author, even from the Japanese source."""
+    clean, authors = parse_detail_title(
+        "[Digital Lover (Nakajima Yuka)] DLO-03",
+        "[Digital Lover (Nakajima Yuka)] テスト",
+        "Doujinshi",
+    )
+    assert clean == "テスト"
+    assert authors == ["Digital Lover (Nakajima Yuka)"]
 
 
 # --------------------------------------------------------------------------

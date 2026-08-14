@@ -31,3 +31,21 @@ def test_http_origin_and_cookies():
 def test_pse_page_base():
     assert _settings().pse_page_base == 1
     assert _settings(pse_page_base=0).pse_page_base == 0
+
+
+def test_opds_acq_mode_default_and_validation(monkeypatch):
+    from app.config import load_settings
+
+    # default: direct (compat-first)
+    assert _settings().opds_acq_mode == "direct"
+    assert Settings(ipb_member_id="1", ipb_pass_hash="abc").opds_acq_mode == "direct"
+
+    # env parsing: direct / detail / unknown → direct
+    monkeypatch.delenv("OPDS_ACQ_MODE", raising=False)
+    assert load_settings().opds_acq_mode == "direct"
+    monkeypatch.setenv("OPDS_ACQ_MODE", "detail")
+    assert load_settings().opds_acq_mode == "detail"
+    monkeypatch.setenv("OPDS_ACQ_MODE", "DETAIL")
+    assert load_settings().opds_acq_mode == "detail"  # lower-cased
+    monkeypatch.setenv("OPDS_ACQ_MODE", "bogus")
+    assert load_settings().opds_acq_mode == "direct"  # unknown → direct

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from typing import Callable
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,13 +16,14 @@ from fastapi.responses import Response
 
 from ..eh.models import (
     DetailPageInfo,
+    GalleryComment,
     GalleryListItem,
     GalleryPageInfo,
     GalleryTag,
 )
 from ..eh.parser import _parse_size_text, apply_status_filter, parse_publish_time_iso
 from ..eh.service import EHService
-from ..eh.title_parser import parse_title_authors
+from ..eh.title_parser import parse_detail_title, parse_title_authors
 from ..home_config import (
     Section,
     build_href,
@@ -31,6 +34,8 @@ from ..home_config import (
 from .feed import (
     MIME_ACQ,
     MIME_NAV,
+    MIME_PUBLICATION,
+    REL_SUBSECTION,
     Opds2Builder,
     _iso,
 )
@@ -38,6 +43,32 @@ from .feed import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opds/v2.0", tags=["opds2"])
+
+# Gallery URLs inside comment HTML: https://(e-hentai|exhentai).org/g/{gid}/{token}/
+# (optionally with ?p= / #anchors; /mpv/ viewer links map to the same detail doc).
+# The trailing `[^"']*` eats any query/fragment so the rewritten href always
+# points at the OPDS 2.0 detail document for that gallery.
+_CONTENT_GALLERY_LINK_RE = re.compile(
+    r'(href=["\'])(https?://(?:e-hentai|exhentai)\.org/'
+    r'(?:g|mpv)/(\d+)/([0-9a-fA-F]+)/[^"\']*)(["\'])'
+)
+
+
+def _rewrite_gallery_links(content: str, href: Callable[[str], str]) -> str:
+    """Rewrite E-Hentai gallery links inside comment HTML to OPDS links.
+
+    Lets the first-party app open galleries referenced in comments in-app
+    (``/opds/v2.0/gallery/{gid}/{token}``) instead of leaving the site. The
+    anchor text is left untouched — clients may keep showing the original URL
+    while navigating via the rewritten href. Non-gallery links (uploader
+    pages, forums, external sites) are left verbatim.
+    """
+
+    def _repl(m: re.Match) -> str:
+        gid, token = m.group(3), m.group(4)
+        return f"{m.group(1)}{href(f'/opds/v2.0/gallery/{gid}/{token}')}{m.group(5)}"
+
+    return _CONTENT_GALLERY_LINK_RE.sub(_repl, content)
 
 # Gallery list titles for the built-in browsing dimensions.
 _LIST_TITLES = {"popular": "Popular", "watched": "Watched", "favorites": "Favorites"}
@@ -101,11 +132,40 @@ def _mytags_payload(t: GalleryTag) -> dict:
     return item
 
 
-def _detail_extensions(detail: DetailPageInfo) -> dict:
+def _comment_payload(c: GalleryComment, href: Callable[[str], str] | None = None) -> dict:
+    """extensions.reviews entry: display-relevant subset only.
+
+    Mirrors the JHenTai GalleryComment fields that matter for display:
+    id/username/userId/time/lastEditTime/content (raw HTML). Interactive
+    flags (fromMe/votedUp/votedDown) and score details are deliberately
+    omitted (MVP); empty optional fields are dropped. When ``href`` is given
+    (the feed's href() helper), gallery links inside the content are rewritten
+    to OPDS 2.0 detail links for in-app navigation.
+    """
+    item: dict = {"id": c.id, "username": c.username, "time": c.time}
+    if c.user_id is not None:
+        item["userId"] = c.user_id
+    if c.last_edit_time:
+        item["lastEditTime"] = c.last_edit_time
+    if c.content_html:
+        content = c.content_html
+        if href is not None:
+            content = _rewrite_gallery_links(content, href)
+        item["content"] = content
+    return item
+
+
+def _detail_extensions(
+    detail: DetailPageInfo,
+    comments_enabled: bool = True,
+    href: Callable[[str], str] | None = None,
+) -> dict:
     """Single private-extension bucket consumed by the first-party client.
 
     Scraped from the detail page (gdata-equivalent): rating, Japanese title,
-    uploader, size, expunged, category. Tags never appear here: mytags is a
+    uploader, size, expunged, category, and — when enabled — the gallery
+    comment block (``reviews``, raw HTML content with gallery links rewritten
+    to OPDS detail links via ``href``). Tags never appear here: mytags is a
     list-feeds-only field (the client merges the list item's mytags into the
     detail view) and the full tag set lives in `subject`.
     """
@@ -124,6 +184,8 @@ def _detail_extensions(detail: DetailPageInfo) -> dict:
         ext["expunged"] = True
     if detail.category:
         ext["category"] = detail.category
+    if comments_enabled and detail.comments:
+        ext["reviews"] = [_comment_payload(c, href) for c in detail.comments]
     return ext
 
 
@@ -287,6 +349,7 @@ async def root_feed(request: Request):
                 navs.append({
                     "title": s.title,
                     "href": builder.href(build_href(type=s.type, query=s.query)),
+                    "rel": REL_SUBSECTION,
                     "type": MIME_ACQ,
                 })
         if pubs:
@@ -306,8 +369,7 @@ async def root_feed(request: Request):
             else:
                 root_nav.append({
                     "title": s.title,
-                    "href": build_href(type=s.type, query=s.query),
-                    "summary": s.title,
+                    "href": builder.href(build_href(type=s.type, query=s.query)),
                 })
 
     content = builder.navigation_document(
@@ -456,24 +518,25 @@ async def toplist_feed(
     )
 
 
-@router.get("/gallery/{gid}/{token}", response_class=Response)
-async def gallery_detail(request: Request, gid: int, token: str):
-    """Single-publication document rendered from the detail-page HTML.
+async def _detail_publication(
+    service: EHService, builder: Opds2Builder, gid: int, token: str
+) -> dict:
+    """Fetch the detail page and render its single publication object.
 
-    Fetching the detail page here pre-warms the page-URL mapping cache so the
-    first /stream request after opening a gallery skips one upstream round
-    trip (fast reader entry). Zero gdata.
+    Shared by the acquisition detail document and the single-publication
+    endpoint: both render from the same cached detail-page HTML (1h) and
+    pre-warm the page-URL mapping, so the first /stream request after
+    opening a gallery skips one upstream round trip. Zero gdata.
     """
-    service = _service(request)
-    builder = _builder(request)
-
     detail = await service.get_detail_page(gid, token, 0)
-    clean_title, authors = parse_title_authors(detail.title, detail.category)
+    clean_title, authors = parse_detail_title(
+        detail.title, detail.title_jpn, detail.category
+    )
     modified = _detail_modified(detail.publish_time)
     tags = apply_status_filter(list(detail.tags), builder.settings.tag_status_filter)
     tags = _sort_tags(tags)
     subjects = _flatten_subjects(tags)
-    pub = builder.publication(
+    return builder.publication(
         gid=gid,
         token=token,
         title=clean_title,
@@ -484,8 +547,26 @@ async def gallery_detail(request: Request, gid: int, token: str):
         published=modified,
         subjects=subjects,
         number_of_pages=detail.image_count,
-        extensions=_detail_extensions(detail),
+        extensions=_detail_extensions(
+            detail, builder.settings.comments_enabled, builder.href
+        ),
+        detail_document=True,
     )
+
+
+@router.get("/gallery/{gid}/{token}", response_class=Response)
+async def gallery_detail(request: Request, gid: int, token: str):
+    """Single-publication acquisition document rendered from the detail-page HTML.
+
+    Fetching the detail page here pre-warms the page-URL mapping cache so the
+    first /stream request after opening a gallery skips one upstream round
+    trip (fast reader entry). Zero gdata.
+    """
+    service = _service(request)
+    builder = _builder(request)
+
+    pub = await _detail_publication(service, builder, gid, token)
+    clean_title = pub["metadata"]["title"]
     content = builder.acquisition_document(
         title=clean_title,
         identifier=f"urn:ehentai:gallery:{gid}:{token}",
@@ -495,5 +576,25 @@ async def gallery_detail(request: Request, gid: int, token: str):
     return Response(
         content=content,
         media_type=MIME_ACQ,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@router.get("/gallery/{gid}/{token}/publication", response_class=Response)
+async def gallery_publication(request: Request, gid: int, token: str):
+    """Single-publication document: a top-level RWPM/OPDS publication object.
+
+    This is the target of every publication's `rel="self"` link. Clients
+    like Stump follow `self` to open details and read through the embedded
+    `readingOrder` (per-page image URLs); the response shape matches what
+    their parser expects (a publication object, not an acquisition feed).
+    """
+    service = _service(request)
+    builder = _builder(request)
+
+    pub = await _detail_publication(service, builder, gid, token)
+    return Response(
+        content=builder.serialize(pub),
+        media_type=MIME_PUBLICATION,
         headers={"Cache-Control": "public, max-age=300"},
     )

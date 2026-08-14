@@ -146,6 +146,24 @@ class GalleryMetadata:
 
 
 @dataclass
+class GalleryComment:
+    """One gallery comment parsed from the detail page's `#cdiv` block.
+
+    Field names mirror the JHenTai reference (`GalleryComment`); only the
+    display-relevant subset is kept — interactive flags (fromMe/votedUp/
+    votedDown) and score details are deliberately dropped (MVP). Content is
+    preserved as raw HTML (JHenTai keeps the Element; clients render it).
+    """
+
+    id: int
+    username: str
+    user_id: int | None = None  # from the forums showuser= link
+    time: str = ""  # site-local "yyyy-MM-dd HH:mm" (JHenTai-aligned)
+    last_edit_time: str = ""  # from .c8 > strong (empty when unedited)
+    content_html: str = ""  # raw HTML of .c6 (client renders)
+
+
+@dataclass
 class GalleryListItem:
     """A gallery entry parsed from a list page (gid/token/title/cover/category)."""
 
@@ -211,6 +229,8 @@ class DetailPageInfo:
     filesize_text: str = ""  # #gdd File Size row (e.g. "189.3 MiB")
     torrent_count: int = 0   # #gd5 torrent link count
     expunged: bool = False   # any #gdd value contains "Expunged"
+    # Comments from the #cdiv block (latest batch visible on this page).
+    comments: list[GalleryComment] = field(default_factory=list)
 
 
 @dataclass

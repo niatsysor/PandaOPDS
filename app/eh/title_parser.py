@@ -6,7 +6,8 @@ EH naming convention (per JHenTai reference):
     [Author1, Author2] Clean Title
 
 The last ``[...]`` before the clean title text is treated as the author
-bracket.  All names extracted from it are returned as a flat list.
+bracket.  Its content is returned **verbatim as a single author string** —
+``Group (artist)`` and comma/、 enumerations are never split apart.
 """
 
 from __future__ import annotations
@@ -18,10 +19,6 @@ _BRACKET_RE = re.compile(r"\[.*?\]|\(.*?\)")
 
 # Last [...] before the clean title — this is the author bracket.
 _LAST_BRACKET_RE = re.compile(r"\[([^\]]+)\]\s*$")
-
-# "Name (Role)" pattern inside the author bracket.
-_NAME_ROLE_RE = re.compile(r"^(.+?)\s*\((.+?)\)\s*$")
-
 
 def parse_title_authors(title: str, category: str = "") -> tuple[str, list[str]]:
     """Parse an EH gallery title into (clean_title, list_of_author_names).
@@ -72,31 +69,26 @@ def parse_title_authors(title: str, category: str = "") -> tuple[str, list[str]]
 
 
 def _parse_author_names(text: str) -> list[str]:
-    """Extract author names from bracket content.
+    """Return the author bracket content as a single whole — never split.
 
-    Handles:
-    - ``Name (Role)`` → ``["Name", "Role"]``  (circle / artist convention)
-    - ``Name1, Name2`` → ``["Name1", "Name2"]``
-    - ``Name1、Name2`` → ``["Name1", "Name2"]``
-    - Plain ``Name`` → ``["Name"]``
+    ``Group (artist)`` and comma/、 enumerations stay verbatim as one
+    author string; callers treat it as an opaque label.
     """
-    # Try "Name (Role)" pattern first.
-    m = _NAME_ROLE_RE.match(text)
-    if m:
-        names = [m.group(1).strip(), m.group(2).strip()]
-    else:
-        names = [text]
+    return [text]
 
-    # Further split each part by common separators.
-    result: list[str] = []
-    for name in names:
-        split = False
-        for sep in ("、", ",", "，"):
-            if sep in name:
-                result.extend(s.strip() for s in name.split(sep) if s.strip())
-                split = True
-                break
-        if not split:
-            result.append(name)
 
-    return result
+def parse_detail_title(
+    title: str, title_jpn: str, category: str = ""
+) -> tuple[str, list[str]]:
+    """Detail-document title: prefer the Japanese title as the clean-title
+    source; fall back to the default title when titleJpn is missing or
+    contains nothing but bracket markers.
+
+    A titleJpn of only markers (e.g. ``[中国翻訳]``) parses back to the raw
+    input, so it is treated as missing and the default title wins.
+    """
+    if title_jpn and _BRACKET_RE.sub("", title_jpn).strip():
+        clean, authors = parse_title_authors(title_jpn, category)
+        if clean:
+            return clean, authors
+    return parse_title_authors(title, category)

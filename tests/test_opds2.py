@@ -5,6 +5,7 @@ import json
 from app.config import Settings
 from app.opds2.feed import (
     MIME_ACQ,
+    MIME_IMAGE,
     MIME_NAV,
     REL_ACQUISITION,
     REL_STREAM,
@@ -83,16 +84,23 @@ def test_navigation_document():
     search = links["search"]
     assert search["href"] == "/opds/v2.0/gallery?query={searchTerms}"
     assert search["type"] == MIME_ACQ
-    nav_titles = [n["metadata"]["title"] for n in doc["navigation"]]
+    nav_titles = [n["title"] for n in doc["navigation"]]
     assert nav_titles == ["Home", "Watched", "Favorites", "Popular"]
-    hrefs = [n["links"][0]["href"] for n in doc["navigation"]]
+    hrefs = [n["href"] for n in doc["navigation"]]
     assert hrefs == [
         "/opds/v2.0/gallery",
         "/opds/v2.0/gallery?query=watched",
         "/opds/v2.0/gallery?query=favorites",
         "/opds/v2.0/gallery?query=popular",
     ]
-    assert doc["navigation"][0]["links"][0]["rel"] == "subsection"
+    # navigation entries are flat Web Publication links (OPDS 2.0 §2.1,
+    # Komga/Stump-compatible): title/href/rel/type on one level — strict
+    # clients (e.g. Stump's zod parser) reject the nested metadata/links form.
+    assert doc["navigation"][0]["rel"] == "subsection"
+    assert doc["navigation"][0]["type"] == MIME_ACQ
+    # summary is not part of the flat link shape; it is ignored
+    assert "summary" not in doc["navigation"][0]
+    assert "metadata" not in doc["navigation"][0]
 
 
 # -- publications -----------------------------------------------------------
@@ -133,9 +141,12 @@ def test_publication_metadata_and_links():
     assert pub["images"] == [{"href": "/image/123/abc/thumb", "type": "image/jpeg"}]
     links = {l["rel"]: l for l in pub["links"]}
     assert "http://opds-spec.org/image/thumbnail" not in links
+    # default acquisition mode is `direct`: the acquisition link points
+    # straight at the image stream (zero second requests), so clients that
+    # only understand standard rels/types can start reading immediately.
     acq = links[REL_ACQUISITION]
-    assert acq["href"] == "/opds/v2.0/gallery/123/abc"
-    assert acq["type"] == MIME_ACQ
+    assert acq["href"] == "/stream/123/abc/page/{pageNumber}"
+    assert acq["type"] == MIME_IMAGE
     assert acq["properties"]["numberOfItems"] == 42
     stream = links[REL_STREAM]
     assert stream["href"] == "/stream/123/abc/page/{pageNumber}"
@@ -151,6 +162,17 @@ def test_publication_metadata_and_links():
     assert alt["title"] == "e-hentai.org"
     # alternate is appended last: links[0] stays the acquisition link
     assert pub["links"][0]["rel"] == REL_ACQUISITION
+    # RWPM self link: clients like Stump open details by following it; the
+    # target is the single-publication document (top-level publication).
+    self_link = links["self"]
+    assert self_link["href"] == "/opds/v2.0/gallery/123/abc/publication"
+    assert self_link["type"] == "application/opds+json"
+    # RWPM context marks the object as a Readium publication
+    assert pub["context"] == "https://readium.org/webpub-manifest/context.jsonld"
+    # RWPM singular `author` mirrors `authors` (Stump/Readium parsers)
+    assert pub["metadata"]["author"] == [{"name": "uploader"}]
+    # list publications carry no readingOrder (only the detail doc embeds it)
+    assert "readingOrder" not in pub
 
 
 def test_publication_alternate_link_follows_eh_site_not_public_base():
@@ -165,9 +187,51 @@ def test_publication_alternate_link_follows_eh_site_not_public_base():
     alt = links["alternate"]
     assert alt["href"] == "https://exhentai.org/g/123/abc/"
     assert alt["type"] == "text/html"
+    # direct mode: acquisition honors PUBLIC_BASE_URL and points at the stream
     assert links[REL_ACQUISITION]["href"] == (
-        "https://opds.example.com/opds/v2.0/gallery/123/abc"
+        "https://opds.example.com/stream/123/abc/page/{pageNumber}"
     )
+
+
+def test_publication_detail_mode_acquisition_points_at_detail_document():
+    """OPDS_ACQ_MODE=detail: list publications expose the detail document as
+    the acquisition target (second-request flow); stream stays alongside."""
+    builder = Opds2Builder(_settings(opds_acq_mode="detail"))
+    pub = _pub(builder)
+    links = {l["rel"]: l for l in pub["links"]}
+    acq = links[REL_ACQUISITION]
+    assert acq["href"] == "/opds/v2.0/gallery/123/abc"
+    assert acq["type"] == MIME_ACQ
+    assert acq["properties"]["numberOfItems"] == 42
+    stream = links[REL_STREAM]
+    assert stream["href"] == "/stream/123/abc/page/{pageNumber}"
+    assert stream["type"] == MIME_IMAGE
+    # acquisition stays links[0] for naive clients
+    assert pub["links"][0]["rel"] == REL_ACQUISITION
+
+
+def test_publication_detail_document_never_self_referencing():
+    """The detail document always exposes a direct image-stream acquisition
+    link (never a self-referencing one) — in both modes."""
+    for mode in ("direct", "detail"):
+        builder = Opds2Builder(_settings(opds_acq_mode=mode))
+        pub = _pub(builder, detail_document=True)
+        links = {l["rel"]: l for l in pub["links"]}
+        acq = links[REL_ACQUISITION]
+        assert acq["href"] == "/stream/123/abc/page/{pageNumber}"
+        assert acq["type"] == MIME_IMAGE
+        assert acq["properties"]["numberOfItems"] == 42
+        # the document never points at itself
+        assert acq["href"] != "/opds/v2.0/gallery/123/abc"
+        assert REL_STREAM in links
+        # detail publications embed the RWPM readingOrder (per-page image
+        # URLs) so stream readers (Stump Divina) paginate without lookups
+        order = pub["readingOrder"]
+        assert len(order) == 42
+        assert order[0] == {"href": "/stream/123/abc/page/1", "type": "image/jpeg"}
+        assert order[-1] == {"href": "/stream/123/abc/page/42", "type": "image/jpeg"}
+        assert all(link["type"] == "image/jpeg" for link in order)
+        assert "alternate" in links
 
 
 def test_publication_standard_fields_omitted_when_unset():
@@ -193,14 +257,31 @@ def test_publication_page_base_zero():
 
 
 def test_publication_no_page_count_omits_stream():
+    """Unknown page count: direct mode omits the acquisition/stream links
+    entirely (they need {pageNumber} + a page count); self/alternate stay."""
     builder = Opds2Builder(_settings())
     pub = _pub(builder, page_count=None)
     rels = {l["rel"] for l in pub["links"]}
     assert REL_STREAM not in rels
-    # Without page_count, acquisition link won't have properties either.
+    assert REL_ACQUISITION not in rels
+    # self/alternate are unconditional (self = detail entry, alternate = share)
+    assert "self" in rels
+    assert "alternate" in rels
+    # no readingOrder without a page count either
+    assert "readingOrder" not in pub
+
+
+def test_publication_no_page_count_detail_mode_keeps_acquisition():
+    """Unknown page count in detail mode: the acquisition link (→ detail
+    document) survives without numberOfItems; stream is omitted."""
+    builder = Opds2Builder(_settings(opds_acq_mode="detail"))
+    pub = _pub(builder, page_count=None)
+    rels = {l["rel"] for l in pub["links"]}
+    assert REL_STREAM not in rels
     acq = [l for l in pub["links"] if l["rel"] == REL_ACQUISITION][0]
+    assert acq["href"] == "/opds/v2.0/gallery/123/abc"
+    assert acq["type"] == MIME_ACQ
     assert "properties" not in acq
-    # alternate is unconditional (always shareable)
     assert "alternate" in rels
 
 
@@ -309,9 +390,75 @@ def test_absolute_urls_when_public_base_set():
     builder = Opds2Builder(_settings(public_base_url="https://opds.example.com"))
     doc = _load(builder.navigation_document([{"title": "Latest", "href": "/opds/v2.0/gallery", "summary": ""}]))
     assert doc["links"][0]["href"] == "https://opds.example.com/opds/v2.0"
+    # flat navigation entries honor PUBLIC_BASE_URL too
+    assert doc["navigation"][0]["href"] == (
+        "https://opds.example.com/opds/v2.0/gallery"
+    )
     pub = _pub(builder)
     stream = [l for l in pub["links"] if l["rel"] == REL_STREAM][0]
     assert (
         stream["href"]
         == "https://opds.example.com/stream/123/abc/page/{pageNumber}"
+    )
+
+
+# -- comment gallery-link rewriting ----------------------------------------
+
+from app.eh.models import GalleryComment
+from app.opds2.router import _comment_payload
+
+
+_COMMENT_HTML = (
+    '<div class="c6" id="comment_0">'
+    '<a href="https://e-hentai.org/g/867387/3a0d9903d3/">https://e-hentai.org/g/867387/3a0d9903d3/</a>'
+    ' <a href="https://exhentai.org/g/123456/aabbcc/?p=2#comments">ex page</a>'
+    ' <a href="https://e-hentai.org/mpv/98765/fedcba/">mpv</a>'
+    ' <a href="https://e-hentai.org/uploader/gvc051126">uploader</a>'
+    ' <a href="https://forums.e-hentai.org/index.php?showuser=685825">forum</a>'
+    ' <a href="https://example.com/x">external</a>'
+    "</div>"
+)
+
+
+def _comment(**kw) -> GalleryComment:
+    base = dict(id=0, username="u", time="2026-08-12 13:11", content_html=_COMMENT_HTML)
+    base.update(kw)
+    return GalleryComment(**base)
+
+
+def test_comment_payload_preserves_html_without_href():
+    """Without an href() helper the content is passed through verbatim."""
+    item = _comment_payload(_comment())
+    assert item["content"] == _COMMENT_HTML
+
+
+def test_comment_gallery_links_rewritten_relative():
+    item = _comment_payload(_comment(), href=lambda p: p)
+    content = item["content"]
+    # /g/ links (e-hentai + exhentai) rewrite to the OPDS detail doc; query/fragment dropped
+    assert (
+        'href="/opds/v2.0/gallery/867387/3a0d9903d3"'
+        in content
+    )
+    assert 'href="/opds/v2.0/gallery/123456/aabbcc"' in content
+    # /mpv/ viewer links map to the same detail doc
+    assert 'href="/opds/v2.0/gallery/98765/fedcba"' in content
+    # non-gallery links stay verbatim
+    assert 'href="https://e-hentai.org/uploader/gvc051126"' in content
+    assert 'href="https://forums.e-hentai.org/index.php?showuser=685825"' in content
+    assert 'href="https://example.com/x"' in content
+    # anchor text untouched
+    assert "https://e-hentai.org/g/867387/3a0d9903d3/</a>" in content
+
+
+def test_comment_gallery_links_rewritten_absolute():
+    item = _comment_payload(
+        _comment(),
+        href=Opds2Builder(
+            _settings(public_base_url="https://opds.example.com")
+        ).href,
+    )
+    assert (
+        'href="https://opds.example.com/opds/v2.0/gallery/867387/3a0d9903d3"'
+        in item["content"]
     )

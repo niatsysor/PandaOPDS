@@ -229,7 +229,7 @@ async def test_opds2_home_no_auth(tmp_path, monkeypatch):
     doc = r.json()
 
     # ungrouped navigation sections only; 我的收藏 (favorites) is auth-gated
-    nav_titles = [n["metadata"]["title"] for n in doc["navigation"]]
+    nav_titles = [n["title"] for n in doc["navigation"]]
     assert nav_titles == ["历史总榜", "日文原版"]
     assert "Watched" not in nav_titles and "Favorites" not in nav_titles
 
@@ -268,7 +268,7 @@ async def test_opds2_home_with_auth(tmp_path, monkeypatch):
 
     r = await _get("/opds/v2.0")
     doc = r.json()
-    nav_titles = [n["metadata"]["title"] for n in doc["navigation"]]
+    nav_titles = [n["title"] for n in doc["navigation"]]
     assert nav_titles == ["历史总榜", "我的收藏", "日文原版"]
 
 
@@ -666,8 +666,10 @@ async def test_opds_v12_chapter_feed_from_detail_html(tmp_path, monkeypatch):
     root = etree.fromstring(r.content)
     NS = {"a": "http://www.w3.org/2005/Atom"}
     entry = root.find("a:entry", NS)
-    assert entry.findtext("a:title", namespaces=NS) == "Chapter 1: Gallery 1"
-    assert entry.findtext("a:author/a:name", namespaces=NS) == "Author"
+    # detail title prefers titleJpn as the clean-title source
+    assert entry.findtext("a:title", namespaces=NS) == "Chapter 1: テスト"
+    # "テスト" carries no author bracket -> no <author> element
+    assert entry.findtext("a:author/a:name", namespaces=NS) is None
     cat = entry.find("a:category", NS)
     assert cat.get("term") == "Manga"
     stream = [
@@ -695,7 +697,8 @@ async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
     assert r.status_code == 200
     doc = r.json()
     md = doc["publications"][0]["metadata"]
-    assert md["title"] == "Gallery 1"
+    # detail title prefers titleJpn as the clean-title source
+    assert md["title"] == "テスト"
     assert md["language"] == ["zh"]
     assert md["numberOfPages"] == 42
     assert md["published"] == "2026-08-12T13:11:00Z"
@@ -706,6 +709,55 @@ async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
     assert ext["sizeBytes"] == 12939427  # 12.34 MB
     assert ext["category"] == "Manga"
     assert "expunged" not in ext
+    # detail publication: acquisition points at the image stream (never at
+    # the detail document itself — no self-referencing loop)
+    links = {l["rel"]: l for l in doc["publications"][0]["links"]}
+    acq = links["http://opds-spec.org/acquisition"]
+    assert acq["href"] == "/stream/1/tok1/page/{pageNumber}"
+    assert acq["type"] == "image/jpeg"
+    assert acq["properties"]["numberOfItems"] == 42
+
+
+@pytest.mark.asyncio
+async def test_opds2_gallery_publication_rwpm_document(tmp_path, monkeypatch):
+    """/gallery/{gid}/{token}/publication returns a top-level RWPM publication
+    (the `rel=self` target): metadata + links + images + readingOrder, with
+    no acquisition-feed wrapper — the shape Stump's parser expects."""
+    settings = _settings()
+    service = EHService(settings)
+    monkeypatch.setattr(service, "get_detail_page", _async_value(_detail(1)))
+
+    async def boom(*a, **k):
+        raise RuntimeError("gdata must not be called for publication documents")
+
+    monkeypatch.setattr(service, "get_metadata", boom)
+    _install_app_state(settings, service)
+
+    r = await _get("/opds/v2.0/gallery/1/tok1/publication")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/opds+json")
+    pub = r.json()
+    # top-level publication object, not an acquisition feed
+    assert "publications" not in pub
+    assert pub["context"] == "https://readium.org/webpub-manifest/context.jsonld"
+    md = pub["metadata"]
+    assert md["title"] == "テスト"
+    # title_jpn carries no author bracket → no author/author fields
+    assert "author" not in md and "authors" not in md
+    assert md["extensions"]["rating"] == 4.5
+    links = {l["rel"]: l for l in pub["links"]}
+    # self points at the publication document itself (the URL just fetched)
+    assert links["self"]["href"] == "/opds/v2.0/gallery/1/tok1/publication"
+    # acquisition is the direct image stream (no self-reference loop)
+    assert links["http://opds-spec.org/acquisition"]["href"] == (
+        "/stream/1/tok1/page/{pageNumber}"
+    )
+    # readingOrder: one image URL per page, 1-based by default
+    order = pub["readingOrder"]
+    assert len(order) == 42
+    assert order[0]["href"] == "/stream/1/tok1/page/1"
+    assert order[-1]["href"] == "/stream/1/tok1/page/42"
+    assert all(l["type"] == "image/jpeg" for l in order)
 
 
 @pytest.mark.asyncio
