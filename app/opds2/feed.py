@@ -4,8 +4,10 @@ Navigation and acquisition documents follow OPDS 2.0
 (https://drafts.opds.io/opds-2.0/). PSE streaming is exposed as a custom link
 rel on each publication (`http://vaemendis.net/opds-pse/stream`) with
 `properties.numberOfItems` set to the page count; acquisition links carry the
-same property per the spec. hrefs are relative by default, absolute when
-PUBLIC_BASE_URL is set.
+same property per the spec. Template hrefs — stream `{pageNumber}`, search
+`{searchTerms}` — carry `templated: true` (RWPM link semantics) so compliant
+clients substitute instead of requesting them literally. hrefs are relative
+by default, absolute when PUBLIC_BASE_URL is set.
 """
 
 from __future__ import annotations
@@ -77,6 +79,7 @@ class Opds2Builder:
         mime: str = "",
         title: str = "",
         properties: dict | None = None,
+        templated: bool | None = None,
     ) -> dict:
         link: dict = {"href": href, "rel": rel}
         if mime:
@@ -85,6 +88,14 @@ class Opds2Builder:
             link["title"] = title
         if properties:
             link["properties"] = properties
+        if templated is None:
+            # Auto-detect RFC 6570 URL templates: any href containing `{...}`
+            # is a template (stream {pageNumber}, search {searchTerms}) that
+            # clients must substitute — never request literally. The explicit
+            # override stays available for exotic URLs with literal braces.
+            templated = "{" in href and "}" in href
+        if templated:
+            link["templated"] = True
         return link
 
     # -- navigation document -----------------------------------------------
@@ -229,7 +240,7 @@ class Opds2Builder:
         project's single private-extension bucket consumed by the first-party
         client.
 
-        Acquisition link layout is driven by ``settings.opds_acq_mode`` plus
+        Acquisition link layout is driven by ``settings.opds_acq_detail`` plus
         ``detail_document`` (True for the detail document itself):
 
         * list/root publications in ``direct`` mode (default) → the acquisition
@@ -270,7 +281,7 @@ class Opds2Builder:
             page_props = {"numberOfItems": page_count}
         stream_href = self.href(f"/stream/{gid}/{token}/page/{{pageNumber}}")
         links: list[dict] = []
-        direct = detail_document or self.settings.opds_acq_mode == "direct"
+        direct = detail_document or not self.settings.opds_acq_detail
         if direct:
             # Acquisition points straight at the image stream: zero-round-trip
             # reading for clients that only understand standard rels/types.

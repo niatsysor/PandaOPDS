@@ -13,7 +13,7 @@
 | | v2.0 导航 `application/opds+json;profile=navigation`；采集 `application/opds+json;profile=acquisition` |
 | href | 默认**相对路径**；设置 `PUBLIC_BASE_URL` 时输出绝对 URL。**Stump 必须设置**（它用自身服务器地址解析相对链接，相对路径会 404；Panels/Kasane/自研客户端不受影响） |
 | 页码 | PSE stream 默认 **1-based**（第 1 页 = `page/1`）；`PSE_PAGE_BASE=0` 可切 0-based（带外约定，不在链路中传输） |
-| 获取模式 | `OPDS_ACQ_MODE=direct\|detail`（默认 **`direct`**）：acquisition 直接指向图片流（零二次请求）或指向详情文档（二次请求流程），§3.4 |
+| 获取模式 | `OPDS_ACQ_DETAIL=false\|true`（布尔，默认 **`false`**=direct）：acquisition 直接指向图片流（零二次请求）或指向详情文档（二次请求流程），§3.4 |
 | 缓存 | feed 均 `Cache-Control: public, max-age=300` |
 
 **登录态**：`IPB_MEMBER_ID`/`IPB_PASS_HASH` 可选。未提供时 Watched/Favorites 导航项**不输出**；提供时输出（不做探测验证，cookie 失效时对应 feed 返回 503）。
@@ -30,7 +30,7 @@
   "links": [
     { "href": "/opds/v2.0", "rel": "self", "type": "application/opds+json;profile=navigation", "title": "PandaOPDS" },
     { "href": "/opds/v2.0", "rel": "start", "type": "application/opds+json;profile=navigation", "title": "PandaOPDS" },
-    { "href": "/opds/v2.0/gallery?query={searchTerms}", "rel": "search", "type": "application/opds+json;profile=acquisition", "title": "Search" }
+    { "href": "/opds/v2.0/gallery?query={searchTerms}", "rel": "search", "type": "application/opds+json;profile=acquisition", "title": "Search", "templated": true }
   ],
   "navigation": [
     {
@@ -169,18 +169,20 @@
 
 ### 3.4 链接（`links[]`）
 
-**获取模式**：acquisition link 的指向由服务端配置 `OPDS_ACQ_MODE` 决定（默认 `direct`，兼容至上）：
+**获取模式**：acquisition link 的指向由服务端布尔配置 `OPDS_ACQ_DETAIL` 决定（默认 `false` = direct，兼容至上）：
 
-- **`direct`（默认）**：acquisition 直接指向图片流——客户端点击即读，**零二次请求**。不输出指向详情文档的 acquisition（详情文档仍可访问，自研客户端由 identifier 中的 gid/token 拼 URL）。
-- **`detail`**：acquisition 指向详情文档——客户端二次请求详情（完整元数据）后再读（Panels 风格）。
+- **`OPDS_ACQ_DETAIL=false`（默认，direct）**：acquisition 直接指向图片流——客户端点击即读，**零二次请求**。不输出指向详情文档的 acquisition（详情文档仍可访问，自研客户端由 identifier 中的 gid/token 拼 URL）。
+- **`OPDS_ACQ_DETAIL=true`（detail）**：acquisition 指向详情文档——客户端二次请求详情（完整元数据）后再读（Panels 风格）。
 - 未知页数时（无 `page_count`）：`direct` 模式不输出 acquisition/stream；`detail` 模式保留指向详情文档的 acquisition（无 `numberOfItems`）。
 
 | rel | href | type | 附加 |
 |---|---|---|---|
-| `self` | `/opds/v2.0/gallery/{gid}/{token}/publication` | `application/opds+json` | **恒有**；单 publication 文档（顶层 RWPM 对象）；**Stump 等客户端跟随 `self` 打开详情** |
-| `http://opds-spec.org/acquisition` | `direct`：`/stream/{gid}/{token}/page/{pageNumber}`；`detail`：`/opds/v2.0/gallery/{gid}/{token}` | `direct`：`image/jpeg`；`detail`：`application/opds+json;profile=acquisition` | `properties.numberOfItems` = 页数（>0 时） |
-| `http://vaemendis.net/opds-pse/stream` | `/stream/{gid}/{token}/page/{pageNumber}` | `image/jpeg` | `properties.numberOfItems` = 页数；`{pageNumber}` 占位符由客户端替换；页数>0 时 |
+| `self` | `/opds/v2.0/gallery/{gid}/{token}/publication` | `application/opds+json` | **恒有**；单 publication 文档（顶层 RWPM 对象）；**详情补全入口**（Stump 等客户端跟随 `self` 打开详情；自研客户端进详情经 self 拉一次） |
+| `http://opds-spec.org/acquisition` | `direct`：`/stream/{gid}/{token}/page/{pageNumber}`；`detail`：`/opds/v2.0/gallery/{gid}/{token}` | `direct`：`image/jpeg`；`detail`：`application/opds+json;profile=acquisition` | `properties.numberOfItems` = 页数（>0 时）；**只承担内容获取**（读流/下载），不承担详情入口；`direct` 模式为模板链接，标 `templated: true` |
+| `http://vaemendis.net/opds-pse/stream` | `/stream/{gid}/{token}/page/{pageNumber}` | `image/jpeg` | `properties.numberOfItems` = 页数；`{pageNumber}` 占位符由客户端替换；**`templated: true`**；页数>0 时 |
 | `alternate` | 上游 E-Hentai 图库页 `https://{e-hentai\|exhentai}.org/g/{gid}/{token}/` | `text/html` | **恒有**；**分享表单取此 link**（客户端无需感知 `EH_SITE`）；绝对 URL，不受 `PUBLIC_BASE_URL` 影响 |
+
+> **模板标记**：href 含 `{...}` 的链接（stream/acquisition 的 `{pageNumber}`、search 的 `{searchTerms}`）统一标 `templated: true`（RWPM link 语义）——客户端**替换占位符后使用，永不按字面请求**；self/alternate/next/facets 等具体 URL 不带此标记。v1.2（Atom）无 templated 属性，PSE rel 语义自身定义 href 为模板。
 
 > **封面不在 `links` 中**：thumbnail link rel（`http://opds-spec.org/image/thumbnail`）是 OPDS 1.x 的做法，v2.0 按规范 §2.3 放入 `images[]` 集合（见 §3.5）。v1.2（Atom）仍用 link rel。
 
@@ -226,10 +228,10 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
   },
   "links": [
     { "rel": "http://opds-spec.org/acquisition", "href": "/stream/4113236/73634e0e9a/page/{pageNumber}",
-      "type": "image/jpeg", "title": "Nejire",
+      "type": "image/jpeg", "templated": true, "title": "Nejire",
       "properties": { "numberOfItems": 42 } },
     { "rel": "http://vaemendis.net/opds-pse/stream", "href": "/stream/4113236/73634e0e9a/page/{pageNumber}",
-      "type": "image/jpeg", "properties": { "numberOfItems": 42 } },
+      "type": "image/jpeg", "templated": true, "properties": { "numberOfItems": 42 } },
     { "rel": "self", "href": "/opds/v2.0/gallery/4113236/73634e0e9a/publication",
       "type": "application/opds+json", "title": "Nejire" },
     { "rel": "alternate", "href": "https://e-hentai.org/g/4113236/73634e0e9a/",
@@ -241,7 +243,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 }
 ```
 
-> 以上为默认 `direct` 模式；`OPDS_ACQ_MODE=detail` 时 acquisition 指向 `/opds/v2.0/gallery/{gid}/{token}`（`type="application/opds+json;profile=acquisition"`），客户端二次请求详情后再读。
+> 以上为默认 `OPDS_ACQ_DETAIL=false`（direct）模式；`OPDS_ACQ_DETAIL=true` 时 acquisition 指向 `/opds/v2.0/gallery/{gid}/{token}`（`type="application/opds+json;profile=acquisition"`），客户端二次请求详情后再读。
 
 ---
 
@@ -274,8 +276,8 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
   "metadata": { "title": "…", "author": [{ "name": "…" }], "numberOfPages": 42, "extensions": {…} },
   "links": [
     { "rel": "self", "href": "/opds/v2.0/gallery/{gid}/{token}/publication", "type": "application/opds+json" },
-    { "rel": "http://opds-spec.org/acquisition", "href": "/stream/{gid}/{token}/page/{pageNumber}", "type": "image/jpeg", "properties": { "numberOfItems": 42 } },
-    { "rel": "http://vaemendis.net/opds-pse/stream", "href": "/stream/{gid}/{token}/page/{pageNumber}", "type": "image/jpeg", "properties": { "numberOfItems": 42 } },
+    { "rel": "http://opds-spec.org/acquisition", "href": "/stream/{gid}/{token}/page/{pageNumber}", "type": "image/jpeg", "templated": true, "properties": { "numberOfItems": 42 } },
+    { "rel": "http://vaemendis.net/opds-pse/stream", "href": "/stream/{gid}/{token}/page/{pageNumber}", "type": "image/jpeg", "templated": true, "properties": { "numberOfItems": 42 } },
     { "rel": "alternate", "href": "https://e-hentai.org/g/{gid}/{token}/", "type": "text/html" }
   ],
   "images": [{ "href": "/image/{gid}/{token}/thumb", "type": "image/jpeg" }],
@@ -292,7 +294,7 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 
 ### 4.3 搜索
 
-- **v2.0**：顶层 `rel="search"` link 的 `href` 直接含模板 `/opds/v2.0/gallery?query={searchTerms}`——客户端替换 `{searchTerms}` 即得搜索结果文档，无需先请求 OpenSearch。
+- **v2.0**：顶层 `rel="search"` link 的 `href` 直接含模板 `/opds/v2.0/gallery?query={searchTerms}`（标 `templated: true`）——客户端替换 `{searchTerms}` 即得搜索结果文档，无需先请求 OpenSearch。
 - **v1.2**：`rel="search"` 指向 `/opds/v1.2/search.xml`（OpenSearchDescription），模板 `?query={searchTerms}`。
 
 ---
@@ -363,10 +365,11 @@ OPDS 2.0 将视觉表现（封面/缩略图）放在顶层 `images` 集合。**�
 
 1. 请求 `/opds/v2.0` 作为主页文档。
 2. `groups[]` → 每个 group 直接渲染为一个网格区块：标题 = `metadata.title`，内容 = `publications[]`。点击区块条目 → 走 `acquisition`（默认 `direct` 模式即图片流，直接读）或 `stream`；点击区块标题 → 完整列表（`links[0].href`）。通用客户端同样原生支持 groups，无需任何私货解析。
-3. 完整元数据：默认 `direct` 模式下列表不暴露详情采集文档链接——自研客户端由 `identifier`（`urn:ehentai:gallery:{gid}:{token}`）中的 gid/token 拼 `/opds/v2.0/gallery/{gid}/{token}` 二次请求；`detail` 模式下直接走 acquisition 进入详情。**Stump 类客户端**跟随 `rel="self"`（→ `/opds/v2.0/gallery/{gid}/{token}/publication`）打开详情，并通过内嵌 `readingOrder` 流式阅读。
+3. 完整元数据（详情补全）走 `rel="self"`：每个 publication 的 `self` → `/opds/v2.0/gallery/{gid}/{token}/publication`（顶层 RWPM 对象，含 reviews/完整 tags/readingOrder）。**进入详情视图 = 明确信号 → 经 self 拉一次完整 manifest 回填**（每次进入拉一次；同一详情视图会话内去重；服务端详情页 HTML 缓存 1h，成本可忽略）；无 self 时回退 acquisition 白名单（type 属 `application/opds+json`/`application/atom+xml`/`application/xml`，剥离 `;profile=` 参数）或静默用列表数据兜底。**响应形状探测**：顶层含 `publications` 键 = 采集文档（取 `publications[0]`），否则整个对象即 publication。`acquisition` 只承担内容获取（读流/下载），不承担详情入口；**Stump 类客户端**跟随 `self` 打开详情，并通过内嵌 `readingOrder` 流式阅读。
 4. `navigation[]` → 渲染为普通导航列表（可点击进入完整列表）。
 5. 搜索：用顶层 `search` link 的 JSON 模板替换 `{searchTerms}`。
 6. 分页：`rel="next"`（gallery 传 `next`，toplist 传 `page`）。
 7. 详情：`/opds/v2.0/gallery/{gid}/{token}` 的 `subject` 为完整标签（经 status 过滤）；列表 `mytags` 无 status、仅高亮样式——展开详情时用详情 `subject` 替换列表精简版、`mytags` 保留列表条目继承高亮（勿整体替换重建）。
 8. 失效兜底：单个 group 上游故障时该 group 不出现在 `groups[]` 中（其他 groups 和 navigation 照常）；首页布局由 `home.toml` 配置驱动，客户端无需感知。
 9. **分享**：取 publication / entry 的 `rel="alternate"` link（`type="text/html"`）作为分享 URL——即上游 E-Hentai 页面（e-hentai.org 或 exhentai.org，服务端已按 `EH_SITE` 拼好），客户端无需感知 `EH_SITE`。勿用 acquisition/stream（那些是服务端资源，离开服务端不可达）。
+10. **模板链接**：href 含 `{...}`（stream 的 `{pageNumber}`、search 的 `{searchTerms}`，标 `templated: true`）一律**替换占位符后使用，永不按字面请求**；「可二次请求」的唯一依据 = acquisition type ∈ {`application/opds+json`、`application/atom+xml`、`application/xml`}（剥离 `;profile=` 参数）——archive/模板/图片/未知 MIME 一律跳过。

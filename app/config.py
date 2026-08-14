@@ -57,17 +57,20 @@ class Settings:
     # Default 1 for client compatibility; set PSE_PAGE_BASE=0 for spec-strict.
     pse_page_base: int = 1
 
-    # --- OPDS 2.0 acquisition mode ---
-    # How list/root publications expose their acquisition link:
-    #   direct (default) -> acquisition points at the image stream directly
+    # --- OPDS 2.0 acquisition mode (OPDS_ACQ_DETAIL, bool) ---
+    # Whether list/root publications' acquisition link targets the detail
+    # document instead of the image stream:
+    #   false (default) -> acquisition points at the image stream directly
     #       (/stream/.../page/{pageNumber}, image/jpeg): clients read with
     #       zero round-trips; no acquisition link when page_count is unknown.
-    #   detail -> acquisition points at the detail document
+    #   true -> acquisition points at the detail document
     #       (/opds/v2.0/gallery/{gid}/{token}): clients perform a second
     #       request for full metadata before reading.
     # The detail document itself always exposes a direct image-stream
     # acquisition link (never a self-referencing one) in both modes.
-    opds_acq_mode: str = "direct"
+    # Legacy OPDS_ACQ_MODE=detail|direct (string) is still honored when
+    # OPDS_ACQ_DETAIL is unset.
+    opds_acq_detail: bool = False
 
     # --- Circuit breaker cooldowns (graded by recovery horizon) ---
     # An IP ban lasts hours: long cooldown means few (safe) probe attempts.
@@ -235,10 +238,16 @@ def load_settings() -> Settings:
             return default
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
-    def _acq_mode(value: str | None) -> str:
-        """Parse OPDS_ACQ_MODE: direct (default) | detail. Unknown → direct."""
-        mode = (value or "direct").strip().lower()
-        return mode if mode in {"direct", "detail"} else "direct"
+    def _acq_detail(value: str | None, legacy: str | None) -> bool:
+        """Parse OPDS_ACQ_DETAIL (bool): true -> acquisition targets the
+        detail document (second-request flow); false (default) -> acquisition
+        points at the image stream. Legacy OPDS_ACQ_MODE=detail|direct
+        (string) is honored when OPDS_ACQ_DETAIL is unset."""
+        if value is not None and value.strip():
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if legacy:
+            return legacy.strip().lower() == "detail"
+        return False
 
     def _facets(value: str | None) -> list[tuple[str, int]]:
         """Parse FACETS: comma-separated Name:mask entries.
@@ -285,7 +294,9 @@ def load_settings() -> Settings:
         max_concurrency=_int(os.getenv("MAX_CONCURRENCY"), 5),
         public_base_url=os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/"),
         pse_page_base=_int(os.getenv("PSE_PAGE_BASE"), 1),
-        opds_acq_mode=_acq_mode(os.getenv("OPDS_ACQ_MODE")),
+        opds_acq_detail=_acq_detail(
+            os.getenv("OPDS_ACQ_DETAIL"), os.getenv("OPDS_ACQ_MODE")
+        ),
         cache_dir=Path(os.getenv("CACHE_DIR", "./cache")),
         cache_max_gb=_gb(os.getenv("CACHE_MAX_GB"), 4.0),
         image_cache_enabled=_bool(os.getenv("IMAGE_CACHE_ENABLED"), True),

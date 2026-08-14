@@ -743,6 +743,8 @@ async def test_opds2_gallery_detail_from_detail_html(tmp_path, monkeypatch):
     assert acq["href"] == "/stream/1/tok1/page/{pageNumber}"
     assert acq["type"] == "image/jpeg"
     assert acq["properties"]["numberOfItems"] == 42
+    # stream href is a {pageNumber} template (templated: true, never literal)
+    assert acq["templated"] is True
 
 
 @pytest.mark.asyncio
@@ -779,6 +781,9 @@ async def test_opds2_gallery_publication_rwpm_document(tmp_path, monkeypatch):
     assert links["http://opds-spec.org/acquisition"]["href"] == (
         "/stream/1/tok1/page/{pageNumber}"
     )
+    assert links["http://opds-spec.org/acquisition"]["templated"] is True
+    # self is a concrete document URL — no templated flag
+    assert "templated" not in links["self"]
     # readingOrder: one image URL per page, 1-based by default
     order = pub["readingOrder"]
     assert len(order) == 42

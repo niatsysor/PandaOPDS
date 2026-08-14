@@ -33,19 +33,38 @@ def test_pse_page_base():
     assert _settings(pse_page_base=0).pse_page_base == 0
 
 
-def test_opds_acq_mode_default_and_validation(monkeypatch):
+def test_opds_acq_detail_default_and_validation(monkeypatch):
     from app.config import load_settings
 
-    # default: direct (compat-first)
-    assert _settings().opds_acq_mode == "direct"
-    assert Settings(ipb_member_id="1", ipb_pass_hash="abc").opds_acq_mode == "direct"
+    # default: false (direct mode, compat-first)
+    assert _settings().opds_acq_detail is False
+    assert Settings(ipb_member_id="1", ipb_pass_hash="abc").opds_acq_detail is False
 
-    # env parsing: direct / detail / unknown → direct
+    # boolean OPDS_ACQ_DETAIL: true/1/yes/on -> detail; anything else -> false
+    monkeypatch.delenv("OPDS_ACQ_DETAIL", raising=False)
     monkeypatch.delenv("OPDS_ACQ_MODE", raising=False)
-    assert load_settings().opds_acq_mode == "direct"
+    assert load_settings().opds_acq_detail is False
+    monkeypatch.setenv("OPDS_ACQ_DETAIL", "true")
+    assert load_settings().opds_acq_detail is True
+    monkeypatch.setenv("OPDS_ACQ_DETAIL", "1")
+    assert load_settings().opds_acq_detail is True
+    monkeypatch.setenv("OPDS_ACQ_DETAIL", "YES")
+    assert load_settings().opds_acq_detail is True  # case-insensitive
+    monkeypatch.setenv("OPDS_ACQ_DETAIL", "0")
+    assert load_settings().opds_acq_detail is False
+    monkeypatch.setenv("OPDS_ACQ_DETAIL", "bogus")
+    assert load_settings().opds_acq_detail is False
+
+    # legacy OPDS_ACQ_MODE=detail|direct (string) honored when OPDS_ACQ_DETAIL unset
+    monkeypatch.delenv("OPDS_ACQ_DETAIL", raising=False)
     monkeypatch.setenv("OPDS_ACQ_MODE", "detail")
-    assert load_settings().opds_acq_mode == "detail"
+    assert load_settings().opds_acq_detail is True
     monkeypatch.setenv("OPDS_ACQ_MODE", "DETAIL")
-    assert load_settings().opds_acq_mode == "detail"  # lower-cased
+    assert load_settings().opds_acq_detail is True  # lower-cased
     monkeypatch.setenv("OPDS_ACQ_MODE", "bogus")
-    assert load_settings().opds_acq_mode == "direct"  # unknown → direct
+    assert load_settings().opds_acq_detail is False
+
+    # OPDS_ACQ_DETAIL takes precedence over the legacy string
+    monkeypatch.setenv("OPDS_ACQ_DETAIL", "false")
+    monkeypatch.setenv("OPDS_ACQ_MODE", "detail")
+    assert load_settings().opds_acq_detail is False

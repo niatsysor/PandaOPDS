@@ -84,6 +84,9 @@ def test_navigation_document():
     search = links["search"]
     assert search["href"] == "/opds/v2.0/gallery?query={searchTerms}"
     assert search["type"] == MIME_ACQ
+    # search href is an RFC 6570 template: marked so clients substitute
+    # {searchTerms} instead of requesting it literally
+    assert search["templated"] is True
     nav_titles = [n["title"] for n in doc["navigation"]]
     assert nav_titles == ["Home", "Watched", "Favorites", "Popular"]
     hrefs = [n["href"] for n in doc["navigation"]]
@@ -148,10 +151,14 @@ def test_publication_metadata_and_links():
     assert acq["href"] == "/stream/123/abc/page/{pageNumber}"
     assert acq["type"] == MIME_IMAGE
     assert acq["properties"]["numberOfItems"] == 42
+    # stream href is a {pageNumber} template: `templated: true` (RWPM link
+    # semantics) tells compliant clients to substitute, never fetch literally
+    assert acq["templated"] is True
     stream = links[REL_STREAM]
     assert stream["href"] == "/stream/123/abc/page/{pageNumber}"
     assert stream["type"] == "image/jpeg"
     assert stream["properties"]["numberOfItems"] == 42
+    assert stream["templated"] is True
     # pageBase was dropped: pages are 1-based by convention
     assert "pageBase" not in stream["properties"]
     assert "pageBase" not in acq["properties"]
@@ -160,6 +167,8 @@ def test_publication_metadata_and_links():
     assert alt["href"] == "https://e-hentai.org/g/123/abc/"
     assert alt["type"] == "text/html"
     assert alt["title"] == "e-hentai.org"
+    # concrete hrefs never carry templated
+    assert "templated" not in alt
     # alternate is appended last: links[0] stays the acquisition link
     assert pub["links"][0]["rel"] == REL_ACQUISITION
     # RWPM self link: clients like Stump open details by following it; the
@@ -167,6 +176,8 @@ def test_publication_metadata_and_links():
     self_link = links["self"]
     assert self_link["href"] == "/opds/v2.0/gallery/123/abc/publication"
     assert self_link["type"] == "application/opds+json"
+    # self is a concrete document URL (no template) — no templated flag
+    assert "templated" not in self_link
     # RWPM context marks the object as a Readium publication
     assert pub["context"] == "https://readium.org/webpub-manifest/context.jsonld"
     # RWPM singular `author` mirrors `authors` (Stump/Readium parsers)
@@ -194,18 +205,22 @@ def test_publication_alternate_link_follows_eh_site_not_public_base():
 
 
 def test_publication_detail_mode_acquisition_points_at_detail_document():
-    """OPDS_ACQ_MODE=detail: list publications expose the detail document as
-    the acquisition target (second-request flow); stream stays alongside."""
-    builder = Opds2Builder(_settings(opds_acq_mode="detail"))
+    """OPDS_ACQ_DETAIL=true (detail mode): list publications expose the detail
+    document as the acquisition target (second-request flow); stream stays
+    alongside."""
+    builder = Opds2Builder(_settings(opds_acq_detail=True))
     pub = _pub(builder)
     links = {l["rel"]: l for l in pub["links"]}
     acq = links[REL_ACQUISITION]
     assert acq["href"] == "/opds/v2.0/gallery/123/abc"
     assert acq["type"] == MIME_ACQ
     assert acq["properties"]["numberOfItems"] == 42
+    # concrete document URL: not a template
+    assert "templated" not in acq
     stream = links[REL_STREAM]
     assert stream["href"] == "/stream/123/abc/page/{pageNumber}"
     assert stream["type"] == MIME_IMAGE
+    assert stream["templated"] is True
     # acquisition stays links[0] for naive clients
     assert pub["links"][0]["rel"] == REL_ACQUISITION
 
@@ -213,14 +228,15 @@ def test_publication_detail_mode_acquisition_points_at_detail_document():
 def test_publication_detail_document_never_self_referencing():
     """The detail document always exposes a direct image-stream acquisition
     link (never a self-referencing one) — in both modes."""
-    for mode in ("direct", "detail"):
-        builder = Opds2Builder(_settings(opds_acq_mode=mode))
+    for detail in (False, True):
+        builder = Opds2Builder(_settings(opds_acq_detail=detail))
         pub = _pub(builder, detail_document=True)
         links = {l["rel"]: l for l in pub["links"]}
         acq = links[REL_ACQUISITION]
         assert acq["href"] == "/stream/123/abc/page/{pageNumber}"
         assert acq["type"] == MIME_IMAGE
         assert acq["properties"]["numberOfItems"] == 42
+        assert acq["templated"] is True
         # the document never points at itself
         assert acq["href"] != "/opds/v2.0/gallery/123/abc"
         assert REL_STREAM in links
@@ -271,10 +287,50 @@ def test_publication_no_page_count_omits_stream():
     assert "readingOrder" not in pub
 
 
+def test_templated_flag_marks_template_hrefs_only():
+    """Only hrefs containing RFC 6570 template variables ({...}) carry
+    `templated: true` (RWPM link semantics): stream {pageNumber} and search
+    {searchTerms} are templates; concrete hrefs (self/alternate/next/facets)
+    never are. Compliant clients substitute templates — never request them
+    literally."""
+    builder = Opds2Builder(_settings())
+    pub = _pub(builder)
+    links = {l["rel"]: l for l in pub["links"]}
+    for rel in (REL_ACQUISITION, REL_STREAM):
+        assert links[rel]["templated"] is True
+    for rel in ("self", "alternate"):
+        assert "templated" not in links[rel]
+
+    nav = _load(
+        builder.navigation_document([{"title": "Latest", "href": "/opds/v2.0/gallery"}])
+    )
+    nav_links = {l["rel"]: l for l in nav["links"]}
+    assert nav_links["search"]["templated"] is True
+    assert "templated" not in nav_links["self"]
+
+    acq_doc = _load(
+        builder.acquisition_document(
+            title="T",
+            identifier="urn:t",
+            publications=[pub],
+            self_href="/opds/v2.0/gallery",
+            next_href="/opds/v2.0/gallery?next=9",
+        )
+    )
+    acq_links = {l["rel"]: l for l in acq_doc["links"]}
+    assert acq_links["search"]["templated"] is True
+    assert "templated" not in acq_links["next"]
+    assert "templated" not in acq_links["self"]
+
+    facets = builder.build_category_facets()
+    for facet_link in facets[0]["links"]:
+        assert "templated" not in facet_link
+
+
 def test_publication_no_page_count_detail_mode_keeps_acquisition():
     """Unknown page count in detail mode: the acquisition link (→ detail
     document) survives without numberOfItems; stream is omitted."""
-    builder = Opds2Builder(_settings(opds_acq_mode="detail"))
+    builder = Opds2Builder(_settings(opds_acq_detail=True))
     pub = _pub(builder, page_count=None)
     rels = {l["rel"] for l in pub["links"]}
     assert REL_STREAM not in rels
@@ -282,6 +338,8 @@ def test_publication_no_page_count_detail_mode_keeps_acquisition():
     assert acq["href"] == "/opds/v2.0/gallery/123/abc"
     assert acq["type"] == MIME_ACQ
     assert "properties" not in acq
+    # concrete document URL: no templated flag
+    assert "templated" not in acq
     assert "alternate" in rels
 
 
@@ -312,6 +370,11 @@ def test_acquisition_document_structure():
     assert doc["publications"][0]["metadata"]["identifier"] == "urn:ehentai:gallery:123:abc"
     rels = {l["rel"] for l in doc["links"]}
     assert {"self", "start", "search", "next"} <= rels
+    search = {l["rel"]: l for l in doc["links"]}["search"]
+    assert search["templated"] is True
+    # next is a concrete pagination URL — never a template
+    nxt = {l["rel"]: l for l in doc["links"]}["next"]
+    assert "templated" not in nxt
 
 
 # -- facets -----------------------------------------------------------------
@@ -400,6 +463,7 @@ def test_absolute_urls_when_public_base_set():
         stream["href"]
         == "https://opds.example.com/stream/123/abc/page/{pageNumber}"
     )
+    assert stream["templated"] is True
 
 
 # -- comment gallery-link rewriting ----------------------------------------

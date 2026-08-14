@@ -178,7 +178,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 - **`navigation[]`**：来自无 `group` 的 `kind="navigation"` 条目。
 - **配置**：`config/home.toml`（**仅 v2.0 消费**）。`[[group]]` 声明组，`[[section]]` 引用 `group` 字段挂载条目。不设文件时使用内置默认布局（publication 预览默认 20 条）。
 
-**OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
+**OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。search 链接同样标 `templated: true`（模板链接统一标记，见「获取模式」）。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 
 ### 章节条目 XML 模板
 
@@ -201,11 +201,14 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numberOfItems`（OPDS 2.0 标准属性）表达；页码基数不再传输（默认 1-based，与 LANraragi/Kasane 一致，`PSE_PAGE_BASE=0` 部署由自研客户端带外约定同步）。封面/缩略图按 OPDS 2.0 §2.3 放入顶层 `images` 集合——thumbnail link rel 是 OPDS 1.x 的 links 做法，v2.0 **不输出**（v1.2 Atom 仍用 link rel）。`images` 恒有（缩略图代理零 ehapi，不依赖 gdata）。
 
-**获取模式（`OPDS_ACQ_MODE`，默认 `direct`）**：acquisition link 的指向由部署者按客户端能力配置（与 `PSE_PAGE_BASE` 同类带外约定）：
+**获取模式（`OPDS_ACQ_DETAIL`，布尔，默认 `false`）**：列表/首页 publication 的 acquisition 指向由部署者按客户端能力配置（与 `PSE_PAGE_BASE` 同类带外约定）：
 
-- `direct`（默认，兼容至上）：列表/首页 publication 的 acquisition **直接指向图片流**（`/stream/{gid}/{token}/page/{pageNumber}`，`type="image/jpeg"`，`properties.numberOfItems`）——客户端点击即读，**零二次请求**；不输出指向详情文档的 acquisition（详情文档仍可访问，自研客户端由 identifier 拼 URL）。
-- `detail`：列表/首页 publication 的 acquisition 指向详情文档（`/opds/v2.0/gallery/{gid}/{token}`，`type="application/opds+json;profile=acquisition"`）——客户端二次请求详情后再读（Panels 风格）。
+- `false`（默认，兼容至上，即 direct）：acquisition **直接指向图片流**（`/stream/{gid}/{token}/page/{pageNumber}`，`type="image/jpeg"`，`properties.numberOfItems`）——客户端点击即读，**零二次请求**；不输出指向详情文档的 acquisition（详情文档仍可访问，自研客户端由 identifier 拼 URL）。
+- `true`（即 detail）：acquisition 指向详情文档（`/opds/v2.0/gallery/{gid}/{token}`，`type="application/opds+json;profile=acquisition"`）——客户端二次请求详情后再读（Panels 风格）。
+- 旧字符串形式 `OPDS_ACQ_MODE=detail|direct` 在 `OPDS_ACQ_DETAIL` 未设置时仍被兼容解析。
 - **详情文档自身恒输出直接 image-stream acquisition（两种模式一致），绝不指向自身**（无自循环）。未知页数（无 `page_count`）时 direct 模式不输出 acquisition/stream link；detail 模式保留指向详情文档的 acquisition（无 `numberOfItems`）。
+- **模板链接一律标 `templated: true`**（RWPM link 语义）：href 含 `{...}` 的链接（stream/acquisition 的 `{pageNumber}`、search 的 `{searchTerms}`）自动标记，规范客户端替换占位符、**永不按字面请求**（`app/opds2/feed.py` `_link()` 自动检测，无需逐处维护）；self/alternate/next/facets 等具体 URL 不带此标记。v1.2（Atom）无 templated 属性——PSE rel 语义自身定义 href 为模板。
+- **语义分工（规范收敛，Kasane 契约）**：`rel="self"` 恒指向单 publication 文档（`/opds/v2.0/gallery/{gid}/{token}/publication`）= **重新获取该 publication 文档的入口**（含 reviews/完整 tags 的详情补全走这里）；`rel="acquisition"` 只承担**内容获取**（直接读流/下载，不承担详情入口）。列表内嵌数据（stream/页数/基础元数据）足够阅读 → 客户端**零请求基线**；进详情 = 明确信号 → 经 self 拉一次完整 manifest 回填（**每次进入拉一次**，无持久化门控；服务端详情页 HTML 缓存 1h，成本可忽略；同一详情视图会话内去重）。旧格式（acquisition → 详情采集文档，type `opds+json`）作为 fallback 保留（无 self 或 self 不可解析时）。
 
 **RWPM/Stump 兼容（所有 publication 恒有）**：
 
@@ -254,11 +257,11 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
   ],
   "links": [
     {"rel": "http://opds-spec.org/acquisition", "href": "/stream/{gid}/{token}/page/{pageNumber}",
-     "type": "image/jpeg",
+     "type": "image/jpeg", "templated": true,
      "properties": {"numberOfItems": {filecount}}},
     {"rel": "http://vaemendis.net/opds-pse/stream",
      "href": "/stream/{gid}/{token}/page/{pageNumber}",
-     "type": "image/jpeg",
+     "type": "image/jpeg", "templated": true,
      "properties": {"numberOfItems": {filecount}}},
     {"rel": "self", "href": "/opds/v2.0/gallery/{gid}/{token}/publication",
      "type": "application/opds+json", "title": "{title}"},
@@ -268,7 +271,7 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 }
 ```
 
-（默认 `direct` 模式；`OPDS_ACQ_MODE=detail` 时列表/首页的 acquisition 指向 `/opds/v2.0/gallery/{gid}/{token}`（`type="application/opds+json;profile=acquisition"`）；详情文档自身恒为直接 image-stream acquisition，不指向自身。顶层恒有 `context`（RWPM）；`metadata` 含 `author`（单数，与 `authors` 并存）；详情 publication 额外内嵌 `readingOrder`。）
+（默认 `OPDS_ACQ_DETAIL=false`（direct）；`OPDS_ACQ_DETAIL=true` 时列表/首页的 acquisition 指向 `/opds/v2.0/gallery/{gid}/{token}`（`type="application/opds+json;profile=acquisition"`）；详情文档自身恒为直接 image-stream acquisition，不指向自身。顶层恒有 `context`（RWPM）；`metadata` 含 `author`（单数，与 `authors` 并存）；详情 publication 额外内嵌 `readingOrder`。）
 
 ### 反代注意事项
 
