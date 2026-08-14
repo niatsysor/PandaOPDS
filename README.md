@@ -1,11 +1,6 @@
 # PandaOPDS
 
-**OPDS-PSE 串流服务器**，作为 E-Hentai / ExHentai 的中转代理：输出 **OPDS 1.2（Atom）** 与 **OPDS 2.0（JSON）** 双版本目录 + PSE 串流链接，任何支持 OPDS-PSE 的漫画阅读器（Panels、Kasane、LANraragi 客户端等）都能直接当作目录源使用。
-
-- 浏览 / 搜索 / 热门 / 排行榜 / Watched / Favorites 一站式目录
-- 图片与缩略图代理串流，内置磁盘 LRU 缓存（默认 4GB / 7 天），一次抓取服务多个客户端
-- 内置全局节流与熔断（IP 封禁 / 图片限额自动检测降级），服务器长期稳定运行
-- 单进程异步，Python 3.11+ / FastAPI / httpx
+**OPDS-PSE 串流服务器**，作为 E-Hentai 的中转代理：输出 **OPDS 1.2（Atom）** 与 **OPDS 2.0（JSON）** 双版本目录 + PSE 串流链接，适用于各种支持 OPDS-PSE 流式传输的阅读器。
 
 > 本仓库仅包含中转代理逻辑，不托管任何内容。
 
@@ -25,40 +20,27 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-服务监听 `127.0.0.1:8000`（仅本机），用反代对外暴露（示例见 `deploy/`）：
-
-- `deploy/nginx.conf.example` — nginx
-- `deploy/Caddyfile.example` — Caddy
-
-反代需透传 Host；设置 `PUBLIC_BASE_URL=https://opds.example.com` 后 feed 输出绝对 URL，否则为相对路径。
-
-```bash
-# 3. 验证
-curl -H "Accept: application/opds+json" http://localhost:8000/opds/v2.0
-curl http://localhost:8000/health
-```
-
-客户端目录源填入 `https://opds.example.com/opds/v2.0`（OPDS 2.0）或 `/opds/v1.2`（OPDS 1.2）。
-
-### 本地运行
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-export IPB_MEMBER_ID=... IPB_PASS_HASH=...
-uvicorn app.main:app --port 8000
-```
-
-### 使用 exhentai
-
-只需设置 `EH_SITE=exhentai`。服务器会用 IPB 会话先在 e-hentai 鉴权，再访问 exhentai，会话级 `igneous` 由 cookie jar 自动维护（`IGNEOUS` 无需提供）。
-
 ### 可选配置
 
 - **OPDS 2.0 首页布局**：编辑 `config/home.toml`（参照 `config/home.toml.example`），声明分组与区块；不配置时使用内置默认布局。
 - **分类筛选（facets）**：`FACETS` 环境变量，格式 `名称:排除掩码`，逗号分隔（如 `FACETS=纯本子:1021,漫画:1019`）。
 - **不提供 IPB cookie**：服务照常运行，公开内容（Latest / Popular / Toplist / Search）可用，仅 Watched / Favorites 导航项不输出。
+
+## WebUI
+
+内置一个轻量管理界面，用于**查看**当前配置与运行状态（当前阶段只读，编辑能力后续迭代）：
+
+| 路由 | 说明 |
+|------|------|
+| `GET /webui` | 单页界面：仪表盘（状态/熔断器/请求计数/缓存）+ 环境变量配置 + 首页布局 |
+| `GET /webui/api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
+| `GET /webui/api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
+| `GET /webui/api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
+
+- 前端为单 HTML（内联 CSS/JS，无构建链、无 CDN 依赖），消费上述 JSON API；未来功能（离线项目管理、自动化工作流）扩展 API 层即可，页面契约不变。
+- **安全**：`IPB_PASS_HASH` / `IGNEOUS` 永不回传明文（页面与 API 均只显示占位符）。`IPB_MEMBER_ID` 为登录标识，会完整展示。
+- WebUI 不触达 E-Hentai，仅读取内存状态；服务配置异常时页面照常可访问并显示错误详情。
+- 部署注意：默认无独立鉴权，遵循既有约定（docker-compose 绑定 loopback / 反代控制访问）。
 
 ## 环境变量
 

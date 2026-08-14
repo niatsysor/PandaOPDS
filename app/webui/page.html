@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PandaOPDS · 管理界面</title>
+<style>
+:root {
+  --bg: #0e1217;
+  --bg-2: #151b23;
+  --bg-3: #1d252f;
+  --bg-hover: #232d3a;
+  --fg: #e6edf3;
+  --fg-dim: #8b98a5;
+  --accent: #4d9fff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --border: #2b3440;
+  --radius: 8px;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.55; }
+[hidden] { display: none !important; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+/* ---- top bar ---- */
+header { display: flex; align-items: center; gap: 14px; padding: 0 20px; height: 52px;
+  border-bottom: 1px solid var(--border); background: var(--bg-2); flex-shrink: 0; }
+.logo { font-weight: 700; font-size: 15px; letter-spacing: .02em; }
+.logo .dot { color: var(--accent); }
+.head-spacer { flex: 1; }
+.head-badges { display: flex; gap: 8px; align-items: center; }
+
+.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.badge.green { background: rgba(63,185,80,.15); color: var(--green); }
+.badge.yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+.badge.red   { background: rgba(248,81,73,.15); color: var(--red); }
+.badge.gray  { background: rgba(139,152,165,.15); color: var(--fg-dim); }
+.badge.blue  { background: rgba(77,159,255,.15); color: var(--accent); }
+
+/* ---- layout ---- */
+.wrap { display: flex; flex: 1; min-height: 0; }
+nav { width: 188px; padding: 12px 10px; border-right: 1px solid var(--border);
+  background: var(--bg-2); display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+.nav-group-label { font-size: 11px; color: var(--fg-dim); padding: 10px 12px 4px; letter-spacing: .06em; }
+.nav-item { padding: 8px 12px; border-radius: 6px; cursor: pointer; color: var(--fg-dim); user-select: none; }
+.nav-item:hover { background: var(--bg-hover); color: var(--fg); }
+.nav-item.active { background: var(--bg-3); color: var(--fg); font-weight: 600; }
+main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+/* ---- cards ---- */
+.card { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.card h3 { font-size: 12px; color: var(--fg-dim); font-weight: 600; margin-bottom: 10px;
+  text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 8px; }
+.card h3 .hint { text-transform: none; font-weight: 400; }
+.page-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.page-sub { color: var(--fg-dim); font-size: 13px; margin-bottom: 18px; }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 14px; }
+.stack { display: flex; flex-direction: column; gap: 14px; }
+
+.kv { display: flex; justify-content: space-between; gap: 14px; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.kv:last-child { border-bottom: none; }
+.kv .k { color: var(--fg-dim); flex-shrink: 0; }
+.kv .v { font-family: var(--mono); text-align: right; word-break: break-all; }
+.kv .v.unmasked { color: var(--fg); }
+.masked-val { color: var(--yellow); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--fg-dim); font-size: 12px; font-weight: 600; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+td.mono { font-family: var(--mono); font-size: 13px; }
+.note { color: var(--fg-dim); font-size: 12px; }
+.err { color: var(--red); font-size: 13px; margin-top: 6px; font-family: var(--mono); word-break: break-all; }
+.muted { color: var(--fg-dim); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 13px; }
+.chip .chip-title { color: var(--fg-dim); margin-right: 6px; }
+
+.stat { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+.stat-label { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
+.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 6px; }
+@media (max-width: 720px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">Panda<span class="dot">OPDS</span> · 管理界面</div>
+    <div class="head-spacer"></div>
+    <div class="head-badges" id="head-badges">
+      <span class="badge gray">加载中…</span>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <nav id="nav">
+      <div class="nav-group-label">运行</div>
+      <div class="nav-item active" id="nav-dashboard" data-view="dashboard">仪表盘</div>
+      <div class="nav-group-label">配置</div>
+      <div class="nav-item" id="nav-config" data-view="config">环境变量配置</div>
+      <div class="nav-item" id="nav-home" data-view="home">首页布局</div>
+    </nav>
+
+    <main>
+      <!-- ============ 仪表盘 ============ -->
+      <section id="view-dashboard">
+        <div class="page-title">仪表盘</div>
+        <div class="page-sub">服务运行状态，每 10 秒自动刷新</div>
+        <div class="dash-grid" id="dash-grid"><div class="card">加载中…</div></div>
+      </section>
+
+      <!-- ============ 配置 ============ -->
+      <section id="view-config" hidden>
+        <div class="page-title">环境变量配置</div>
+        <div class="page-sub">当前生效配置（源自环境变量 / .env）。凭据类字段已脱敏。</div>
+        <div class="stack" id="config-groups"><div class="card">加载中…</div></div>
+      </section>
+
+      <!-- ============ 首页布局 ============ -->
+      <section id="view-home" hidden>
+        <div class="page-title">首页布局（home.toml）</div>
+        <div class="page-sub">OPDS 2.0 首页的 groups / sections 声明，仅 v2.0 消费。</div>
+        <div class="stack" id="home-content"><div class="card">加载中…</div></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function fmtBytes(b) {
+  if (b == null) return "-";
+  if (b >= 1 << 30) return (b / (1 << 30)).toFixed(2) + " GB";
+  if (b >= 1 << 20) return (b / (1 << 20)).toFixed(1) + " MB";
+  if (b >= 1024) return (b / 1024).toFixed(1) + " KB";
+  return b + " B";
+}
+function hitRate(h, m) {
+  const t = h + m;
+  return t ? (100 * h / t).toFixed(1) + "%" : "—";
+}
+function badge(text, cls) {
+  return '<span class="badge ' + cls + '">' + esc(text) + "</span>";
+}
+function kv(k, v, cls) {
+  return '<div class="kv"><span class="k">' + esc(k) + '</span><span class="v ' + (cls || "") + '">' + v + "</span></div>";
+}
+function card(title, inner, hint) {
+  return '<div class="card"><h3>' + esc(title) + (hint ? ' <span class="hint muted">' + esc(hint) + "</span>" : "")
+    + "</h3>" + inner + "</div>";
+}
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!r.ok) throw new Error(url + " -> HTTP " + r.status);
+  return r.json();
+}
+
+/* ---------------- 视图切换 ---------------- */
+const VIEWS = ["dashboard", "config", "home"];
+let loaded = { config: false, home: false };
+
+function switchView(name) {
+  VIEWS.forEach((v) => {
+    const view = document.getElementById("view-" + v);
+    if (view) view.hidden = v !== name;
+    const navEl = document.getElementById("nav-" + v);
+    if (navEl) navEl.classList.toggle("active", v === name);
+  });
+}
+document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
+  el.addEventListener("click", () => {
+    const v = el.dataset.view;
+    switchView(v);
+    if (v === "config" && !loaded.config) { loaded.config = true; loadConfig(); }
+    if (v === "home" && !loaded.home) { loaded.home = true; loadHome(); }
+  });
+});
+
+/* ---------------- 仪表盘 ---------------- */
+async function loadDashboard() {
+  let data;
+  try {
+    data = await getJSON("/webui/api/status");
+  } catch (e) {
+    $("#head-badges").innerHTML = badge("API 不可达", "red");
+    $("#dash-grid").innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
+    return;
+  }
+
+  // 顶栏徽章
+  const app = data.app, circ = data.circuit;
+  let head = "";
+  if (circ.state === "open") {
+    head = badge("熔断中", "red") + badge(app.config_ok ? "服务正常" : "配置异常", app.config_ok ? "green" : "yellow");
+  } else {
+    head = badge(app.config_ok ? "服务正常" : "配置异常", app.config_ok ? "green" : "yellow");
+  }
+  $("#head-badges").innerHTML = head;
+
+  const mem = data.memory_cache, disk = data.disk_cache, th = data.throttle, site = data.site;
+  const circInner = circ.state === "open"
+    ? kv("状态", badge("OPEN", "red"))
+      + kv("原因", esc(circ.reason || "unknown"), "unmasked")
+      + kv("剩余冷却", esc(circ.remaining + " s"))
+      + kv("冷却时长", esc(circ.cooldown + " s"))
+    : kv("状态", badge("closed", "green")) + kv("冷却时长", esc(circ.cooldown + " s"));
+
+  const cards = [
+    card("服务状态", kv("站点", esc(site.site + " → " + site.host)) + kv("对外 URL", esc(site.public_base_url))
+      + kv("IPB 登录", badge(site.has_ipb ? "已配置" : "未配置", site.has_ipb ? "blue" : "gray"))
+      + kv("版本", esc(app.version))
+      + (app.config_error ? '<div class="err">' + esc(app.config_error) + "</div>" : "")),
+    card("熔断器", circInner),
+    card("出站请求（累计）",
+      '<div class="stat-grid">'
+      + '<div><div class="stat">' + esc(th.html_requests) + '</div><div class="stat-label">HTML</div></div>'
+      + '<div><div class="stat">' + esc(th.api_requests) + '</div><div class="stat-label">API</div></div>'
+      + '<div><div class="stat">' + esc(th.image_requests) + '</div><div class="stat-label">图片</div></div>'
+      + "</div>"
+      + kv("并发上限", esc(th.max_concurrency)) + kv("HTML 间隔", esc(th.html_interval_seconds + " s")), "节流参数"),
+    card("内存缓存",
+      kv("条目", esc(mem.size + " / " + mem.max_entries))
+      + kv("命中 / 未命中", esc(mem.hits + " / " + mem.misses))
+      + kv("命中率", esc(hitRate(mem.hits, mem.misses)))),
+    card("磁盘图片缓存",
+      kv("状态", badge(disk.enabled ? "启用" : "关闭", disk.enabled ? "blue" : "gray"))
+      + kv("条目", esc(disk.entries))
+      + kv("占用", esc(fmtBytes(disk.bytes)))
+      + kv("命中 / 未命中", esc(disk.hits + " / " + disk.misses))
+      + kv("命中率", esc(hitRate(disk.hits, disk.misses)))),
+    card("首页布局",
+      kv("来源", data.home.using_file ? badge("home.toml", "blue") : badge("内置默认", "gray"))
+      + kv("文件", esc(data.home.path))
+      + kv("groups / sections", esc(data.home.groups + " / " + data.home.sections))
+      + (data.home.error ? '<div class="err">解析失败：' + esc(data.home.error) + "</div>" : "")),
+  ];
+  $("#dash-grid").innerHTML = cards.join("");
+}
+
+/* ---------------- 配置 ---------------- */
+async function loadConfig() {
+  const wrap = $("#config-groups");
+  let data;
+  try {
+    data = await getJSON("/webui/api/config");
+  } catch (e) {
+    wrap.innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
+    return;
+  }
+  const d = data.derived;
+  const derivedRow = card("派生信息（非配置项）",
+    kv("API 端点", esc(d.api_url)) + kv("HTTP Origin", esc(d.http_origin))
+    + kv("对侧 Host", esc(d.ehentai_host)) + kv("exhentai 模式", badge(d.is_exhentai ? "是" : "否", d.is_exhentai ? "blue" : "gray")));
+
+  const groups = data.groups.map((g) => {
+    const rows = g.fields.map((f) => {
+      const cls = f.masked ? 'masked-val' : "unmasked";
+      const val = f.masked ? (f.set ? "••••••••（已设置）" : "（未设置）") : f.value;
+      return "<tr><td>" + esc(f.label) + "</td><td class=\"mono " + cls + "\">" + esc(val)
+        + (f.note ? '<div class="note">' + esc(f.note) + "</div>" : "") + "</td></tr>";
+    }).join("");
+    return card(g.title, '<table><tbody>' + rows + "</tbody></table>");
+  });
+  wrap.innerHTML = derivedRow + groups.join("");
+}
+
+/* ---------------- 首页布局 ---------------- */
+async function loadHome() {
+  const wrap = $("#home-content");
+  let data;
+  try {
+    data = await getJSON("/webui/api/home");
+  } catch (e) {
+    wrap.innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
+    return;
+  }
+  const groupsChips = data.groups.length
+    ? data.groups.map((g) => '<span class="chip"><span class="chip-title">' + esc(g.id) + "</span>" + esc(g.title) + "</span>").join("")
+    : '<span class="muted">（无命名组）</span>';
+  const src = card("来源",
+    kv("文件", esc(data.path))
+    + kv("使用", data.using_file ? badge("home.toml", "blue") : badge("内置默认布局", "gray"))
+    + (data.error ? '<div class="err">解析失败：' + esc(data.error) + "</div>" : ""));
+  const groupsCard = card("groups（" + data.groups.length + "）", '<div class="chips">' + groupsChips + "</div>");
+  const rows = data.sections.map((s) =>
+    "<tr>"
+    + "<td>" + esc(s.title) + "</td>"
+    + '<td class="mono">' + esc(s.kind) + "</td>"
+    + '<td class="mono">' + esc(s.type) + "</td>"
+    + '<td class="mono">' + esc(s.query) + "</td>"
+    + "<td>" + (s.count ? esc(s.count) : "—") + "</td>"
+    + "<td>" + (s.group ? esc(s.group) : "根") + "</td>"
+    + "<td>" + badge(s.auth_required ? "需登录" : "公开", s.auth_required ? "yellow" : "green") + "</td>"
+    + '<td class="mono"><a href="' + esc(s.href) + '">' + esc(s.href) + "</a></td>"
+    + "</tr>"
+  ).join("");
+  const tableCard = card("sections（" + data.sections.length + "）",
+    '<table><thead><tr><th>标题</th><th>kind</th><th>type</th><th>query</th><th>count</th><th>group</th><th>访问</th><th>href</th></tr></thead><tbody>'
+    + rows + "</tbody></table>");
+  wrap.innerHTML = src + groupsCard + tableCard;
+}
+
+/* ---------------- 启动 ---------------- */
+loadDashboard();
+setInterval(loadDashboard, 10000);
+</script>
+</body>
+</html>

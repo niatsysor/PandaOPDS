@@ -19,6 +19,7 @@ from .opds.router import router as opds_router
 from .opds2.router import router as opds2_router
 from .stream.router import router as stream_router
 from .throttle.limiter import CircuitOpenError
+from .webui.router import router as webui_router
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -72,6 +73,7 @@ app = FastAPI(
 app.include_router(opds_router)
 app.include_router(opds2_router)
 app.include_router(stream_router)
+app.include_router(webui_router)
 
 
 @app.get("/health")

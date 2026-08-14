@@ -53,6 +53,20 @@ class CircuitBreaker:
     def is_open(self) -> bool:
         return self._state == "open"
 
+    @property
+    def state(self) -> dict:
+        """Public snapshot for monitoring/WebUI: state, trip reason and
+        remaining cooldown (0 when closed)."""
+        remaining = 0.0
+        if self._state == "open" and self._opened_at is not None:
+            remaining = max(0.0, self._cooldown - (time.monotonic() - self._opened_at))
+        return {
+            "state": self._state,
+            "reason": self._reason,
+            "remaining": round(remaining, 1),
+            "cooldown": self._cooldown,
+        }
+
     async def trip(self, reason: str, cooldown: float | None = None) -> None:
         async with self._lock:
             self._state = "open"
