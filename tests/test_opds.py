@@ -38,6 +38,10 @@ def test_root_feed_structure():
     root = _parse(xml)
     assert root.tag == f"{{{NS_ATOM}}}feed"
     assert root.find(f"{{{NS_ATOM}}}title").text == "PandaOPDS"
+    # Atom requires <author><name>…</name></author>: a bare text author
+    # fails strict parsers (Stump's opds-legacy feedAuthor schema).
+    author = root.find(f"{{{NS_ATOM}}}author")
+    assert author is not None and author.find(f"{{{NS_ATOM}}}name").text == "PandaOPDS"
     entries = root.findall(f"{{{NS_ATOM}}}entry")
     titles = [e.find(f"{{{NS_ATOM}}}title").text for e in entries]
     assert titles == ["Home", "Watched", "Favorites", "Popular", "Search"]

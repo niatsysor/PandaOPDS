@@ -90,7 +90,10 @@ class FeedBuilder:
         etree.SubElement(feed, f"{{{NS_ATOM}}}title").text = title
         etree.SubElement(feed, f"{{{NS_ATOM}}}id").text = f"urn:ehentai:{title}"
         etree.SubElement(feed, f"{{{NS_ATOM}}}updated").text = updated
-        etree.SubElement(feed, f"{{{NS_ATOM}}}author").text = "PandaOPDS"
+        # Atom requires <author><name>…</name></author>; a bare text author
+        # fails strict parsers (Stump's opds-legacy feedAuthor schema).
+        author = etree.SubElement(feed, f"{{{NS_ATOM}}}author")
+        etree.SubElement(author, f"{{{NS_ATOM}}}name").text = "PandaOPDS"
         # feed-level links
         self._link(feed, REL_SELF, self.href("/opds/v1.2"), MIME_NAV, "PandaOPDS")
         self._link(feed, REL_START, self.href("/opds/v1.2"), MIME_NAV, "PandaOPDS")
