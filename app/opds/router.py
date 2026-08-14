@@ -12,11 +12,6 @@ from ..eh.models import GalleryListItem
 from ..eh.parser import parse_publish_time_iso
 from ..eh.service import EHService
 from ..eh.title_parser import parse_detail_title, parse_title_authors
-from ..home_config import (
-    build_href,
-    is_auth_required,
-    load_home_config,
-)
 from .feed import (
     MIME_ACQ,
     MIME_NAV,
@@ -45,6 +40,19 @@ _TOPLIST_PERIODS = {
     "year": "Past Year",
     "alltime": "All Time",
 }
+
+# Root navigation is hard-coded (decoupled from the v2.0 home.toml layout):
+# a flat catalog of browsing dimensions.  Latest is the first entry; the
+# Toplist is a single entry — periods are picked via OPDS 1.2 facets inside
+# the toplist feed itself.  Watched/Favorites are auth-gated at render time.
+_ROOT_NAV: list[tuple[str, str]] = [
+    ("Latest", "/opds/v1.2/gallery"),
+    ("Watched", "/opds/v1.2/gallery?query=watched"),
+    ("Favorites", "/opds/v1.2/gallery?query=favorites"),
+    ("Popular", "/opds/v1.2/gallery?query=popular"),
+    ("Toplist", "/opds/v1.2/toplist?period=yesterday"),
+]
+_AUTH_GATED = {"Watched", "Favorites"}
 
 
 def _service(request: Request) -> EHService:
@@ -136,28 +144,24 @@ def _gallery_entry(
 
 @router.get("", response_class=Response)
 async def root_feed(request: Request):
-    """Root OPDS 1.2 navigation feed.
+    """Root OPDS 1.2 navigation feed (hard-coded, no home.toml).
 
-    Flattens the home TOML config (all sections) into a single navigation
-    list.  v1.2 has no ``groups[]`` — everything is a plain navigation link.
+    Pure standard navigation: Latest / Watched / Favorites / Popular /
+    Toplist (single entry; period facets live inside the toplist feed) +
+    a trailing protocol-level Search link.  Watched/Favorites are omitted
+    when no IPB cookie is configured.
     """
     builder = _builder(request)
     settings = request.app.state.settings
     has_auth = bool(settings.ipb_member_id and settings.ipb_pass_hash)
-    home = load_home_config(settings.home_config_path)
 
-    def _visible(type: str, query: str) -> bool:
-        if is_auth_required(type, query) and not has_auth:
-            return False
-        return True
-
-    nav: list[tuple[str, str, str]] = []
-    for s in home.sections:
-        if _visible(s.type, s.query):
-            href = build_href(type=s.type, query=s.query, base="/opds/v1.2")
-            nav.append((s.title, href, s.title))
-
-    # Keep OpenSearch as the last nav entry (protocol-level, not in TOML).
+    nav: list[tuple[str, str, str]] = [
+        (title, href, title)
+        for title, href in _ROOT_NAV
+        if title not in _AUTH_GATED or has_auth
+    ]
+    # Keep OpenSearch as the last nav entry (protocol-level, not a catalog
+    # dimension).
     nav.append(("Search", "/opds/v1.2/search.xml", "Search E-Hentai galleries"))
 
     return Response(
@@ -259,6 +263,12 @@ async def toplist_feed(
         )
 
     title = f"E-Hentai: Toplist {_TOPLIST_PERIODS.get(period, period)}"
+    # Period facets (OPDS 1.2 standard): pick the ranklist period inside
+    # the feed; the active period carries opds:activeFacet="true".
+    facets = [
+        (label, builder.href(f"/opds/v1.2/toplist?period={p}"), p == period)
+        for p, label in _TOPLIST_PERIODS.items()
+    ]
     content = builder.gallery_feed(
         query=f"toplist:{period}",
         entries=entries,
@@ -266,6 +276,7 @@ async def toplist_feed(
         next_href=next_href,
         feed_id=f"toplist:{period}",
         title=title,
+        facets=facets,
     )
     return Response(
         content=content,

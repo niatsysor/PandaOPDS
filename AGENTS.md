@@ -147,10 +147,10 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 | 路由 | 说明 |
 |------|------|
-| `GET /opds/v1.2` | 根导航 feed（Watched / Favorites / Popular / Toplist×4 / Search；Home 已移除，Latest 直接走 `/opds/v1.2/gallery`；Watched/Favorites 按 cookie 存在性过滤） |
+| `GET /opds/v1.2` | 根导航 feed（**硬编码，不读 home.toml**）：Latest 置顶，其后 Watched / Favorites / Popular / Toplist（单入口，默认 `period=yesterday`）按序排列，尾部固定 Search；Watched/Favorites 按 cookie 存在性过滤；纯标准导航，无扩展标记、无采集条目 |
 | `GET /opds/v1.2/search.xml` | OpenSearchDescription 文档 |
 | `GET /opds/v1.2/gallery?query=&next=` | 图库采集 feed（`rel="next"` 分页复用 `next` + `lastGid`；`query` 支持浏览维度：空=主页、`watched`、`favorites`、`popular`） |
-| `GET /opds/v1.2/toplist?period=&page=` | Toplist 采集 feed（`period` ∈ yesterday/month/year/alltime；`rel="next"` 用 `page` 分页；纯标准 Atom，**不涉及 extensions**） |
+| `GET /opds/v1.2/toplist?period=&page=` | Toplist 采集 feed（`period` ∈ yesterday/month/year/alltime；`rel="next"` 用 `page` 分页；纯标准 Atom，**不涉及 extensions**；内嵌 **OPDS 1.2 period facets**（`rel="http://opds-spec.org/facet"` + `opds:facetGroup="period"`，当前周期标 `opds:activeFacet="true"`），供客户端在榜单内切换周期） |
 | `GET /opds/v1.2/gallery/{gid}/{token}/chapters` | 图库详情 feed（单章节条目 + PSE stream link） |
 | `GET /stream/{gid}/{token}/page/{n}` | 图片代理流（默认 1-based，`PSE_PAGE_BASE=0` 时 0-based，返回 image/jpeg；v1.2/v2.0 共用） |
 | `GET /image/{gid}/{token}/thumb` | 缩略图代理（共用） |
@@ -162,19 +162,21 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 | `GET /opds/v2.0` | 根导航文档：`[[group]]` 声明命名组，`[[section]]` 引用组 ID 挂载 publication/navigation 条目；无 group 的 section 独立成组或进入根 navigation；Watched/Favorites 无 IPB cookie 时自动过滤 |
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
 | `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
-| `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页） |
+| `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页；内嵌 **OPDS 2.0 period facets**：`facets[0].metadata.title="Period"`，4 条 link 对应 4 周期，当前周期 link 带 `"active": true`） |
 | `GET /opds/v2.0/gallery/{gid}/{token}` | 单 publication 采集文档（完整元数据入口，对应 v1.2 章节 feed；`detail` 模式下为列表 acquisition 落点，`direct` 模式下列表不暴露、自研客户端由 identifier 拼 URL；其 acquisition 恒指向图片流、不指向自身） |
 | `GET /opds/v2.0/gallery/{gid}/{token}/publication` | 单 publication 文档（**顶层 RWPM publication 对象**，非采集文档）：`context`/`metadata`/`links`/`images`/`readingOrder`；每个 publication 的 `rel="self"` 指向此端点，Stump 等客户端跟随 `self` 打开详情并通过内嵌 `readingOrder`（逐页 `/stream/.../page/{n}`）流式阅读 |
 
 浏览维度 `watched`/`favorites` 复用列表解析器（`parse_list_page`）：`EHService.watched_galleries` → `/watched`，`EHService.favorites_galleries` → `/favorites.php`。
 
-### 首页排版（server-driven，v2.0 专属）
+### 首页排版（server-driven，**v2.0 专属**）
 
-**约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，也不在根 feed 混入采集条目。
+**v1.2 不读 `home.toml`**：根导航硬编码（Latest / Watched / Favorites / Popular / Toplist / Search），Toplist 周期在 feed 内以标准 facets 切换（见路由表）。
+
+**约束：凡涉及 `extensions` 的机制一律排除 v1.2**——v1.2 保持纯标准导航，不输出任何扩展标记，不在根 feed 混入采集条目（Latest 不展开、全部目录化）。
 
 - **`groups[]`（OPDS 2.0 标准，§2.5）**：每个 group 包含 `metadata.title`、`links`（`rel="self"`）。可含 `publications[]`（`kind="publication"`）和/或 `navigation[]`（`kind="navigation"`，Komga 风格）。同一 `group` 的 section 合并进一个槽位，publication 与 navigation 可混排。**任何兼容 OPDS 2.0 的客户端均可原生渲染**——无需私货标记。
 - **`navigation[]`**：来自无 `group` 的 `kind="navigation"` 条目。
-- **配置**：`config/home.toml`。`[[group]]` 声明组，`[[section]]` 引用 `group` 字段挂载条目。不设文件时使用内置默认布局。
+- **配置**：`config/home.toml`（**仅 v2.0 消费**）。`[[group]]` 声明组，`[[section]]` 引用 `group` 字段挂载条目。不设文件时使用内置默认布局（publication 预览默认 20 条）。
 
 **OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 

@@ -6,6 +6,7 @@ from app.config import Settings
 from app.opds.feed import (
     MIME_ACQ,
     NS_ATOM,
+    NS_OPDS,
     NS_PSE,
     REL_STREAM,
     REL_THUMB,
@@ -110,6 +111,39 @@ def test_gallery_feed_entries_and_pagination():
     assert len(stream) == 1
     assert stream[0].get("href") == "/stream/1/tok/page/{pageNumber}"
     assert stream[0].get(f"{{{NS_PSE}}}count") == "10"
+
+
+def test_gallery_feed_period_facets():
+    """OPDS 1.2 facet links: one period group, active flag on the current
+    period (used by the toplist feed)."""
+    builder = FeedBuilder(_settings())
+    xml = builder.gallery_feed(
+        query="toplist:year",
+        entries=[],
+        updated=_iso(),
+        title="E-Hentai: Toplist Past Year",
+        facets=[
+            ("Yesterday", "/opds/v1.2/toplist?period=yesterday", False),
+            ("Past Month", "/opds/v1.2/toplist?period=month", False),
+            ("Past Year", "/opds/v1.2/toplist?period=year", True),
+            ("All Time", "/opds/v1.2/toplist?period=alltime", False),
+        ],
+    )
+    root = _parse(xml)
+    facets = [
+        l for l in root.findall(f"{{{NS_ATOM}}}link")
+        if l.get("rel") == "http://opds-spec.org/facet"
+    ]
+    assert [l.get("title") for l in facets] == [
+        "Yesterday", "Past Month", "Past Year", "All Time",
+    ]
+    assert {l.get(f"{{{NS_OPDS}}}facetGroup") for l in facets} == {"period"}
+    active = [l for l in facets if l.get(f"{{{NS_OPDS}}}activeFacet") == "true"]
+    assert len(active) == 1 and active[0].get("title") == "Past Year"
+    inactive = [
+        l for l in facets if l.get(f"{{{NS_OPDS}}}activeFacet") == "false"
+    ]
+    assert len(inactive) == 3
 
 
 def test_chapter_feed_pse_stream_link():

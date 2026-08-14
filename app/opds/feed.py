@@ -25,6 +25,7 @@ REL_IMAGE = "http://opds-spec.org/image"
 REL_ACQUISITION = "http://opds-spec.org/acquisition"
 REL_ALTERNATE = "alternate"  # upstream E-Hentai gallery page (shareable)
 REL_SUBSECTION = "subsection"
+REL_FACET = "http://opds-spec.org/facet"
 REL_NEXT = "next"
 REL_SELF = "self"
 REL_START = "start"
@@ -110,6 +111,8 @@ class FeedBuilder:
         mime: str = "",
         title: str = "",
         count: int | None = None,
+        facet_group: str = "",
+        active: bool | None = None,
     ) -> None:
         link = etree.SubElement(parent, f"{{{NS_ATOM}}}link")
         link.set("rel", rel)
@@ -120,6 +123,10 @@ class FeedBuilder:
             link.set("title", title)
         if count is not None:
             link.set(f"{{{NS_PSE}}}count", str(count))
+        if facet_group:
+            link.set(f"{{{NS_OPDS}}}facetGroup", facet_group)
+        if active is not None:
+            link.set(f"{{{NS_OPDS}}}activeFacet", "true" if active else "false")
 
     def _entry(self, parent: etree._Element, entry: FeedEntry) -> None:
         e = etree.SubElement(parent, f"{{{NS_ATOM}}}entry")
@@ -192,10 +199,28 @@ class FeedBuilder:
         next_href: str | None = None,
         feed_id: str = "galleries",
         title: str = "E-Hentai Galleries",
+        facets: list[tuple[str, str, bool]] | None = None,
     ) -> str:
+        """Acquisition feed with optional OPDS 1.2 facet links.
+
+        `facets` is a list of (title, href, active) tuples emitted as
+        ``rel="http://opds-spec.org/facet"`` links in a single ``period``
+        facet group (the active one carries ``opds:activeFacet="true"``).
+        """
         feed = self._feed(title, updated, MIME_ACQ)
         if next_href:
             self._link(feed, REL_NEXT, next_href, MIME_ACQ, "Next page")
+        if facets:
+            for facet_title, facet_href, active in facets:
+                self._link(
+                    feed,
+                    REL_FACET,
+                    facet_href,
+                    MIME_ACQ,
+                    facet_title,
+                    facet_group="period",
+                    active=active,
+                )
         for entry in entries:
             self._entry(feed, entry)
         return self.serialize(feed)

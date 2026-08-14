@@ -504,12 +504,26 @@ async def toplist_feed(
         )
 
     title = f"E-Hentai: Toplist {_TOPLIST_PERIODS.get(period, period)}"
+    # Period facets (OPDS 2.0): pick the ranklist period inside the feed;
+    # the active period link carries "active": true.
+    facets = [{
+        "metadata": {"title": "Period"},
+        "links": [
+            {
+                "href": builder.href(f"/opds/v2.0/toplist?period={p}"),
+                "title": label,
+                "active": p == period,
+            }
+            for p, label in _TOPLIST_PERIODS.items()
+        ],
+    }]
     content = builder.acquisition_document(
         title=title,
         identifier=f"urn:ehentai:toplist:{period}",
         publications=publications,
         self_href=f"/opds/v2.0/toplist?period={period}",
         next_href=next_href,
+        facets=facets,
     )
     return Response(
         content=content,

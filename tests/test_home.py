@@ -416,6 +416,18 @@ async def test_opds2_toplist_route(tmp_path, monkeypatch):
     assert len(doc["publications"]) == 1
     next_link = next(l for l in doc["links"] if l["rel"] == "next")
     assert next_link["href"] == "/opds/v2.0/toplist?period=month&page=2"
+    # period facets (OPDS 2.0): 4 links, current period marked active
+    assert "facets" in doc
+    fg = doc["facets"][0]
+    assert fg["metadata"]["title"] == "Period"
+    flinks = fg["links"]
+    assert [l["title"] for l in flinks] == [
+        "Yesterday", "Past Month", "Past Year", "All Time",
+    ]
+    assert [l["active"] for l in flinks] == [False, True, False, False]
+    assert all(
+        l["href"].startswith("/opds/v2.0/toplist?period=") for l in flinks
+    )
 
     r = await _get("/opds/v2.0/toplist?period=bogus")
     assert r.status_code == 400
@@ -423,8 +435,9 @@ async def test_opds2_toplist_route(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_opds_v12_home_no_auth(tmp_path):
-    """v1.2 stays pure navigation: all TOML sections flattened to nav links,
-    auth-gated ones dropped; no extension markers."""
+    """v1.2 is hard-coded pure navigation (no home.toml): Latest first,
+    auth-gated Watched/Favorites dropped without IPB cookies, single
+    Toplist entry, trailing Search; no extension markers."""
     from lxml import etree
 
     settings = _settings(ipb_member_id="", ipb_pass_hash="")
@@ -436,10 +449,7 @@ async def test_opds_v12_home_no_auth(tmp_path):
     root = etree.fromstring(r.content)
     NS = {"a": "http://www.w3.org/2005/Atom"}
     titles = [e.findtext("a:title", namespaces=NS) for e in root.findall("a:entry", NS)]
-    assert titles == [
-        "昨日最佳", "月度精选", "年度佳作", "本周热门", "最新上传",
-        "中文同人", "历史总榜", "日文原版", "Search",
-    ]
+    assert titles == ["Latest", "Popular", "Toplist", "Search"]
     # no extension markers in v1.2 entries
     body = r.text
     assert "showcase" not in body and "extensions" not in body
@@ -458,9 +468,11 @@ async def test_opds_v12_home_with_auth(tmp_path):
     root = etree.fromstring(r.content)
     NS = {"a": "http://www.w3.org/2005/Atom"}
     titles = [e.findtext("a:title", namespaces=NS) for e in root.findall("a:entry", NS)]
-    # auth-gated 我的收藏 (favorites) appears; exactly one Search entry
-    # (regression: the Search link used to be appended twice)
-    assert "我的收藏" in titles
+    # Latest first; auth-gated Watched/Favorites appear; exactly one Search
+    # entry (regression: the Search link used to be appended twice)
+    assert titles == [
+        "Latest", "Watched", "Favorites", "Popular", "Toplist", "Search",
+    ]
     assert titles.count("Search") == 1
 
 
@@ -490,6 +502,21 @@ async def test_opds_v12_toplist_route(tmp_path, monkeypatch):
     assert next_links and next_links[0].get("href") == (
         "/opds/v1.2/toplist?period=year&page=2"
     )
+    # period facets (OPDS 1.2 standard): 4 links in one facet group, the
+    # current period carries opds:activeFacet="true"
+    OPDS = "{http://opds-spec.org/2010/catalog}"
+    facet_links = [
+        l for l in root.findall("a:link", NS)
+        if l.get("rel") == "http://opds-spec.org/facet"
+    ]
+    assert [l.get("title") for l in facet_links] == [
+        "Yesterday", "Past Month", "Past Year", "All Time",
+    ]
+    assert {l.get(f"{OPDS}facetGroup") for l in facet_links} == {"period"}
+    active = [
+        l for l in facet_links if l.get(f"{OPDS}activeFacet") == "true"
+    ]
+    assert len(active) == 1 and active[0].get("title") == "Past Year"
 
     r = await _get("/opds/v1.2/toplist?period=bogus")
     assert r.status_code == 400
