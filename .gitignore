@@ -37,5 +37,17 @@ config/home.toml
 # Logs
 *.log
 
+# Editor temp / backup files
+*~
+*.swp
+*.swo
+*.bak
+*.orig
+*.tmp
+
+# Local build artifacts
+coverage.xml
+*.whl
+
 # Test artifacts
 .pytest_cache/
