@@ -76,3 +76,9 @@ docker compose up -d --build
 - 本服务是服务器（多客户端、单 IP 集中请求），比个人客户端更易触发 E-Hentai 封禁。请保持节流参数默认值、善用缓存。
 - 图片限额触发返回 429；IP 被封 / 超限触发全局熔断并返回 503，冷却后自动恢复。
 - 仅限个人使用，请遵守 E-Hentai 服务条款。
+
+## 许可证与致谢
+
+本项目采用 **Apache License 2.0**（见 `LICENSE`）。
+
+E-Hentai 抓取与解析实现（`app/eh/`）参考了 [JHenTai](https://github.com/jiangtian616/JHenTai)（Apache License 2.0，Copyright JHenTai contributors）：HTML 选择器、页面 URL 约定、会话/cookie 处理与上游异常检测机制均以 JHenTai 为参照，代码为本项目的 Python 独立重写。依据 Apache 2.0 §4，本仓库保留其归属声明（见 `THIRD_PARTY_LICENSES`）。
