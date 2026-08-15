@@ -32,10 +32,10 @@ docker compose up -d --build
 
 | 路由 | 说明 |
 |------|------|
-| `GET /webui` | 单页界面：仪表盘（状态/熔断器/请求计数/缓存）+ 环境变量配置 + 首页布局 |
-| `GET /webui/api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
-| `GET /webui/api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
-| `GET /webui/api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
+| `GET /` | 单页界面：仪表盘（状态/熔断器/请求计数/缓存）+ 环境变量配置 + 首页布局（挂载于根目录） |
+| `GET /api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
+| `GET /api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
+| `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
 
 - 前端为单 HTML（内联 CSS/JS，无构建链、无 CDN 依赖），消费上述 JSON API；未来功能（离线项目管理、自动化工作流）扩展 API 层即可，页面契约不变。
 - **安全**：`IPB_PASS_HASH` / `IGNEOUS` 永不回传明文（页面与 API 均只显示占位符）。`IPB_MEMBER_ID` 为登录标识，会完整展示。

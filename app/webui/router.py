@@ -1,13 +1,13 @@
 """WebUI JSON API + page endpoint.
 
-Routes (all under ``/webui``):
+Routes (all under the root):
 
-- ``GET /webui``                      → single-page HTML frontend (page.html)
-- ``GET /webui/api/status``           → runtime status (circuit breaker,
+- ``GET /``                           → single-page HTML frontend (page.html)
+- ``GET /api/status``                 → runtime status (circuit breaker,
                                         request counters, cache stats, home src)
-- ``GET /webui/api/config``           → grouped environment config, credentials
+- ``GET /api/config``                 → grouped environment config, credentials
                                         masked server-side
-- ``GET /webui/api/home``             → home.toml layout (groups + sections,
+- ``GET /api/home``                   → home.toml layout (groups + sections,
                                         source flag / parse error)
 
 Nothing here touches E-Hentai: it only reads ``app.state.settings`` /
@@ -29,7 +29,7 @@ from ..home_config import DEFAULT_CONFIG, build_href, is_auth_required, parse_ho
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/webui", tags=["webui"])
+router = APIRouter(tags=["webui"])
 
 _PAGE = Path(__file__).parent / "page.html"
 
@@ -286,7 +286,6 @@ async def api_home(request: Request):
     }
 
 
-@router.get("")
 @router.get("/")
 async def webui_page():
     return HTMLResponse(_PAGE.read_text(encoding="utf-8"))

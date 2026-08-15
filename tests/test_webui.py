@@ -1,10 +1,10 @@
 """WebUI tests (offline).
 
 Covers:
-- /webui HTML page (200, single-page shell)
-- /webui/api/config: grouped fields, credential masking, set flags
-- /webui/api/status: app/site/circuit/cache/home summary shape
-- /webui/api/home: TOML source flag, default fallback, parse-error surfacing
+- / HTML page (200, single-page shell)
+- /api/config: grouped fields, credential masking, set flags
+- /api/status: app/site/circuit/cache/home summary shape
+- /api/home: TOML source flag, default fallback, parse-error surfacing
 - no-IPB-cookie scenario still serves all endpoints
 """
 
@@ -56,7 +56,7 @@ def _find_field(groups: list[dict], key: str) -> dict:
 async def test_page_served(tmp_path):
     s = _settings(cache_dir=tmp_path)
     _install_app_state(s, EHService(s))
-    resp = await _get("/webui")
+    resp = await _get("/")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Panda" in resp.text and "仪表盘" in resp.text
@@ -94,20 +94,20 @@ async def test_page_without_ipb(tmp_path):
     """Public-only deployment: page + APIs still work."""
     s = _settings(ipb_member_id="", ipb_pass_hash="", cache_dir=tmp_path)
     _install_app_state(s, EHService(s))
-    assert (await _get("/webui")).status_code == 200
-    assert (await _get("/webui/api/config")).status_code == 200
-    assert (await _get("/webui/api/home")).status_code == 200
+    assert (await _get("/")).status_code == 200
+    assert (await _get("/api/config")).status_code == 200
+    assert (await _get("/api/home")).status_code == 200
 
 
 # --------------------------------------------------------------------------
-# /webui/api/config
+# /api/config
 # --------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_config_groups_and_masking(tmp_path):
     s = _settings(cache_dir=tmp_path)
     _install_app_state(s, EHService(s))
-    data = (await _get("/webui/api/config")).json()
+    data = (await _get("/api/config")).json()
 
     groups = data["groups"]
     ids = [g["id"] for g in groups]
@@ -136,13 +136,13 @@ async def test_config_groups_and_masking(tmp_path):
 async def test_config_masks_unset_credential(tmp_path):
     s = _settings(ipb_member_id="", ipb_pass_hash="", cache_dir=tmp_path)
     _install_app_state(s, EHService(s))
-    data = (await _get("/webui/api/config")).json()
+    data = (await _get("/api/config")).json()
     assert _find_field(data["groups"], "ipb_pass_hash")["set"] is False
     assert data["derived"]["has_ipb"] is False
 
 
 # --------------------------------------------------------------------------
-# /webui/api/status
+# /api/status
 # --------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -150,7 +150,7 @@ async def test_status_shape(tmp_path):
     s = _settings(cache_dir=tmp_path)
     service = EHService(s)
     _install_app_state(s, service)
-    data = (await _get("/webui/api/status")).json()
+    data = (await _get("/api/status")).json()
 
     assert data["app"]["config_ok"] is True
     assert data["app"]["version"]
@@ -175,14 +175,14 @@ async def test_status_circuit_open(tmp_path):
     service = EHService(s)
     await service.throttle.trip("BannedError: IP banned", cooldown=600)
     _install_app_state(s, service)
-    data = (await _get("/webui/api/status")).json()
+    data = (await _get("/api/status")).json()
     assert data["circuit"]["state"] == "open"
     assert "banned" in (data["circuit"]["reason"] or "").lower()
     assert 0 < data["circuit"]["remaining"] <= 600
 
 
 # --------------------------------------------------------------------------
-# /webui/api/home
+# /api/home
 # --------------------------------------------------------------------------
 
 _GOOD_TOML = """\
@@ -214,7 +214,7 @@ async def test_home_uses_file(tmp_path):
     home.write_text(_GOOD_TOML, encoding="utf-8")
     s = _settings(cache_dir=tmp_path, home_config_path=home)
     _install_app_state(s, EHService(s))
-    data = (await _get("/webui/api/home")).json()
+    data = (await _get("/api/home")).json()
 
     assert data["using_file"] is True
     assert data["error"] is None
@@ -234,7 +234,7 @@ async def test_home_default_fallback_when_missing(tmp_path):
     missing = tmp_path / "nope.toml"
     s = _settings(cache_dir=tmp_path, home_config_path=missing)
     _install_app_state(s, EHService(s))
-    data = (await _get("/webui/api/home")).json()
+    data = (await _get("/api/home")).json()
     assert data["using_file"] is False
     assert data["error"] is None
     # built-in default layout has both groups and sections
@@ -247,7 +247,7 @@ async def test_home_surfaces_parse_error(tmp_path):
     bad.write_text(_BAD_TOML, encoding="utf-8")
     s = _settings(cache_dir=tmp_path, home_config_path=bad)
     _install_app_state(s, EHService(s))
-    data = (await _get("/webui/api/home")).json()
+    data = (await _get("/api/home")).json()
     assert data["using_file"] is False
     assert data["error"]  # parse error surfaced to the page
     assert data["sections"]  # fallback layout still usable

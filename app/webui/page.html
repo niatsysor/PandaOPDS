@@ -193,7 +193,7 @@ document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
 async function loadDashboard() {
   let data;
   try {
-    data = await getJSON("/webui/api/status");
+    data = await getJSON("/api/status");
   } catch (e) {
     $("#head-badges").innerHTML = badge("API 不可达", "red");
     $("#dash-grid").innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
@@ -255,7 +255,7 @@ async function loadConfig() {
   const wrap = $("#config-groups");
   let data;
   try {
-    data = await getJSON("/webui/api/config");
+    data = await getJSON("/api/config");
   } catch (e) {
     wrap.innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
     return;
@@ -282,7 +282,7 @@ async function loadHome() {
   const wrap = $("#home-content");
   let data;
   try {
-    data = await getJSON("/webui/api/home");
+    data = await getJSON("/api/home");
   } catch (e) {
     wrap.innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
     return;

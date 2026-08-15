@@ -168,6 +168,17 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 浏览维度 `watched`/`favorites` 复用列表解析器（`parse_list_page`）：`EHService.watched_galleries` → `/watched`，`EHService.favorites_galleries` → `/favorites.php`。
 
+**WebUI（`app/webui/`，挂载于根目录，无 `/webui` 前缀）**
+
+| 路由 | 说明 |
+|------|------|
+| `GET /` | 单页管理界面（page.html，内联 CSS/JS 无外链）：仪表盘（状态/熔断器/请求计数/缓存）+ 环境变量配置 + 首页布局；仅读 `app.state`，零出站请求，配置异常时页面照常可访问 |
+| `GET /api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
+| `GET /api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
+| `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
+
+根路径 `/` 与 `/api/*` 命名空间由 WebUI 独占（勿在其上挂新路由）；`/health` 为独立探活端点（`app/main.py`），互不冲突。
+
 ### 首页排版（server-driven，**v2.0 专属**）
 
 **v1.2 不读 `home.toml`**：根导航硬编码（Latest / Watched / Favorites / Popular / Toplist / Search），Toplist 周期在 feed 内以标准 facets 切换（见路由表）。
@@ -314,6 +325,7 @@ uvicorn app.main:app --reload --port 8000
 curl -H "Accept: application/atom+xml" http://localhost:8000/opds/v1.2
 curl -H "Accept: application/opds+json" http://localhost:8000/opds/v2.0
 curl -H "Accept: application/atom+xml" "http://localhost:8000/opds/v1.2/gallery?query=language:chinese"
+curl -s http://localhost:8000/api/status | head -c 200; echo  # WebUI 状态（根目录挂载）
 curl -o /tmp/p0.jpg "http://localhost:8000/stream/{gid}/{token}/page/0"
 ```
 
