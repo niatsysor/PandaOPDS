@@ -13,7 +13,7 @@ from typing import Awaitable, Callable
 from ..cache.disk import DiskImageCache, detect_image_type
 from ..cache.memory import MemoryCache
 from ..config import Settings
-from ..throttle.limiter import KIND_API, KIND_HTML, KIND_IMAGE, Throttle
+from ..throttle.limiter import KIND_API, KIND_HTML, KIND_IMAGE, KIND_THUMB, Throttle
 from .client import EHClient
 from .exceptions import (
     BannedError,
@@ -362,8 +362,8 @@ class EHService:
             await self.disk.put(gid, token, page_no_1, data)
         return data, detect_image_type(data)
 
-    async def _fetch_image_bytes(self, url: str, referer: str) -> bytes:
-        async with self.throttle.acquired(KIND_IMAGE):
+    async def _fetch_image_bytes(self, url: str, referer: str, kind: str = KIND_IMAGE) -> bytes:
+        async with self.throttle.acquired(kind):
             try:
                 await self.client.establish_session()
                 return await self.client.fetch_image_bytes(url, referer=referer)
@@ -396,7 +396,9 @@ class EHService:
             if data is not None:
                 return data, detect_image_type(data)
         url = await self.get_thumb_url(gid, token)
-        data = await self._fetch_image_bytes(url, referer=f"{self.settings.http_origin}/")
+        data = await self._fetch_image_bytes(
+            url, referer=f"{self.settings.http_origin}/", kind=KIND_THUMB
+        )
         if self.disk.enabled:
             await self.disk.put(gid, token, -1, data)
         return data, detect_image_type(data)
@@ -409,6 +411,7 @@ class EHService:
                 "html_requests": self.throttle.html_requests,
                 "api_requests": self.throttle.api_requests,
                 "image_requests": self.throttle.image_requests,
+            "thumb_requests": self.throttle.thumb_requests,
                 "circuit_open": self.throttle.circuit.is_open,
             },
             "memory_cache": self.mem.stats,

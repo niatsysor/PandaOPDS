@@ -57,7 +57,15 @@ class Settings:
     timeout_seconds: float = 6.0      # JHenTai-style default timeout
     retries: int = 3                  # network-error retries
     html_interval_seconds: float = 0.3  # min delay between HTML page requests
-    max_concurrency: int = 5          # global outbound concurrency (EH API: 4-5 safe)
+    # HTML/API share one pool (EH API: 4-5 safe; HTML is the ban-risk traffic
+    # that the interval protects). Image fetches are split out:
+    #   - image_max_concurrency: full-res /stream bytes are 509-quota traffic
+    #     -> conservative (5)
+    #   - thumb_max_concurrency: cover/thumbnail CDN fetches (ehgt.org) match
+    #     a browser's 25-thumbnail tile load on the source site -> 25
+    max_concurrency: int = 5          # HTML/API outbound concurrency
+    image_max_concurrency: int = 5    # full-res image bytes (/stream)
+    thumb_max_concurrency: int = 25   # cover / thumbnail CDN fetches
 
     # --- URLs ---
     public_base_url: str = ""  # when set, feeds emit absolute URLs
@@ -320,6 +328,8 @@ def load_settings() -> Settings:
         retries=_int(os.getenv("RETRIES"), 3),
         html_interval_seconds=_float(os.getenv("HTML_INTERVAL_SECONDS"), 0.3),
         max_concurrency=_int(os.getenv("MAX_CONCURRENCY"), 5),
+        image_max_concurrency=_int(os.getenv("IMAGE_MAX_CONCURRENCY"), 5),
+        thumb_max_concurrency=_int(os.getenv("THUMB_MAX_CONCURRENCY"), 25),
         public_base_url=os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/"),
         pse_page_base=_int(os.getenv("PSE_PAGE_BASE"), 1),
         opds_acq_detail=_acq_detail(

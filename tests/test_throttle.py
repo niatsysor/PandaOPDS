@@ -8,6 +8,8 @@ import pytest
 from app.config import Settings
 from app.throttle.limiter import (
     KIND_HTML,
+    KIND_IMAGE,
+    KIND_THUMB,
     CircuitBreaker,
     CircuitOpenError,
     Throttle,
@@ -109,3 +111,41 @@ async def test_throttle_circuit_open_rejects():
     with pytest.raises(CircuitOpenError):
         async with t.acquired(KIND_HTML):
             pass  # pragma: no cover
+
+
+async def _acquire_slot(t: Throttle, kind: str):
+    async with t.acquired(kind):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_kind_specific_concurrency_pools():
+    """HTML/API, full-image and thumbnail pools are independent."""
+    t = Throttle(_settings(
+        max_concurrency=1,
+        image_max_concurrency=1,
+        thumb_max_concurrency=3,
+        html_interval_seconds=0,
+    ))
+
+    # hold one slot in each pool
+    async with t.acquired(KIND_HTML):
+        async with t.acquired(KIND_IMAGE):
+            async with t.acquired(KIND_THUMB):
+                # a second thumbnail request proceeds (pool has 3 slots)
+                second_thumb = asyncio.create_task(_acquire_slot(t, KIND_THUMB))
+                await asyncio.sleep(0.05)
+                assert second_thumb.done(), "thumb pool should have spare slots"
+
+                # a second full-image request is blocked (pool has 1 slot)
+                second_image = asyncio.create_task(_acquire_slot(t, KIND_IMAGE))
+                await asyncio.sleep(0.05)
+                assert not second_image.done(), "image pool must stay capped at 1"
+
+                # a second HTML request is blocked (pool has 1 slot)
+                second_html = asyncio.create_task(_acquire_slot(t, KIND_HTML))
+                await asyncio.sleep(0.05)
+                assert not second_html.done(), "html pool must stay capped at 1"
+
+            second_image.cancel()
+        second_html.cancel()

@@ -26,6 +26,8 @@ services:
       # --- throttling ---
       HTML_INTERVAL_SECONDS: ${HTML_INTERVAL_SECONDS:-1.5}
       MAX_CONCURRENCY: ${MAX_CONCURRENCY:-2}
+      IMAGE_MAX_CONCURRENCY: ${IMAGE_MAX_CONCURRENCY:-5}
+      THUMB_MAX_CONCURRENCY: ${THUMB_MAX_CONCURRENCY:-25}
     volumes:
       - cache-data:/data/cache
       - ./config:/config          # home.toml lives here

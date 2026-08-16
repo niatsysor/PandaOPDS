@@ -57,7 +57,9 @@ docker compose up -d --build
 | `CACHE_MAX_GB` | `4` | 磁盘缓存上限（GB） |
 | `IMAGE_CACHE_ENABLED` | `true` | 设为 `false` 关闭磁盘缓存 |
 | `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；docker-compose 预设 `1.5` |
-| `MAX_CONCURRENCY` | `5` | 出站并发上限；docker-compose 预设 `2` |
+| `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；docker-compose 预设 `2` |
+| `IMAGE_MAX_CONCURRENCY` | `5` | 全图（`/stream` 原图）并发上限：509 配额流量，保守 |
+| `THUMB_MAX_CONCURRENCY` | `25` | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发；docker-compose 预设 `25` |
 | `TIMEOUT_SECONDS` | `6` | 出站请求超时（秒） |
 | `RETRIES` | `3` | 网络错误重试次数 |
 | `BANNED_COOLDOWN_SECONDS` | `1800` | IP 封禁熔断冷却（秒） |

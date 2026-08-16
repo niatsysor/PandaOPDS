@@ -302,7 +302,7 @@ FastAPI (uvicorn) 单进程
 ├─ 代理层：图片/缩略图流式转发 + 磁盘缓存
 ├─ 数据层：gdata API + 列表/详情/图片页 HTML 解析
 ├─ 缓存层：内存（元数据/cover/页面URL）+ 磁盘（图片，7d）
-└─ 限流层：asyncio.Semaphore + 请求间隔；banned/509/exceedLimit 检测与熔断
+└─ 限流层：三档并发信号量（HTML/API 默认 5、全图 5、封面图 25，docker 预设 2/5/25）+ HTML 请求间隔；banned/509/exceedLimit 检测与熔断
 ```
 
 一次图库完整生命周期：
