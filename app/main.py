@@ -13,6 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .auth import auth_request_ok, unauthorized_response
+from .archive.manager import ArchiveManager
+from .archive.router import router as archive_router
+from .archive.store import ArchiveStore
 from .config import ConfigError, load_settings
 from .eh.exceptions import EHException
 from .eh.service import EHService
@@ -54,6 +57,17 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.service = service
 
+    # Archive manager: persistent GP-purchased zip masters (independent of the
+    # disk LRU cache; enabled implicitly when IPB cookies are configured).
+    archive_manager = ArchiveManager(
+        settings,
+        client=service.client,
+        throttle=service.throttle,
+        store=ArchiveStore(settings.archive_dir),
+    )
+    service.attach_archive(archive_manager)
+    app.state.archive = archive_manager
+
     if settings.auth_enabled:
         exempt = ("/health", *settings.auth_exempt_paths)
         logger.info(
@@ -92,6 +106,7 @@ app = FastAPI(
 app.include_router(opds_router)
 app.include_router(opds2_router)
 app.include_router(stream_router)
+app.include_router(archive_router)
 app.include_router(webui_router)
 
 

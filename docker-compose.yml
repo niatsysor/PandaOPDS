@@ -23,6 +23,10 @@ services:
       CACHE_DIR: /data/cache
       CACHE_MAX_GB: ${CACHE_MAX_GB:-4}
       IMAGE_CACHE_ENABLED: ${IMAGE_CACHE_ENABLED:-true}
+      # --- archive (GP-purchased persistent zip masters) ---
+      ARCHIVE_DIR: /data/archives
+      ARCHIVE_QUALITY: ${ARCHIVE_QUALITY:-original}
+      ARCHIVE_DOWNLOAD_CONCURRENCY: ${ARCHIVE_DOWNLOAD_CONCURRENCY:-5}
       # --- throttling ---
       HTML_INTERVAL_SECONDS: ${HTML_INTERVAL_SECONDS:-1.5}
       MAX_CONCURRENCY: ${MAX_CONCURRENCY:-2}
@@ -30,7 +34,9 @@ services:
       THUMB_MAX_CONCURRENCY: ${THUMB_MAX_CONCURRENCY:-25}
     volumes:
       - cache-data:/data/cache
+      - archive-data:/data/archives   # persistent GP archive masters
       - ./config:/config          # home.toml lives here
 
 volumes:
   cache-data:
+  archive-data:

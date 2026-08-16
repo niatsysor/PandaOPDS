@@ -78,3 +78,25 @@ class ParseError(EHException):
     def __init__(self, message: str, *, raw_html: str | None = None):
         super().__init__(message, retryable=False)
         self.raw_html = raw_html
+
+
+class ArchiverUnavailableError(EHException):
+    """Archiver unavailable: Star membership required or gallery cannot be
+    archived (page error text)."""
+
+    status_code = 403
+
+
+class InsufficientGPError(EHException):
+    """Not enough GP on the account for the requested quality tier."""
+
+    status_code = 403
+
+
+class ArchiveNotReadyError(EHException):
+    """The archive is still being prepared upstream (internal polling)."""
+
+    status_code = 409
+
+    def __init__(self, message: str = "archive still being prepared"):
+        super().__init__(message, retryable=True)

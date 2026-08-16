@@ -111,6 +111,7 @@ button.btn:disabled { opacity: .5; cursor: not-allowed; }
     <nav id="nav">
       <div class="nav-group-label">运行</div>
       <div class="nav-item active" id="nav-dashboard" data-view="dashboard">仪表盘</div>
+      <div class="nav-item" id="nav-archive" data-view="archive">归档</div>
       <div class="nav-group-label">配置</div>
       <div class="nav-item" id="nav-config" data-view="config">环境变量配置</div>
       <div class="nav-item" id="nav-home" data-view="home">首页布局</div>
@@ -122,6 +123,13 @@ button.btn:disabled { opacity: .5; cursor: not-allowed; }
         <div class="page-title">仪表盘</div>
         <div class="page-sub">服务运行状态，每 10 秒自动刷新</div>
         <div class="dash-grid" id="dash-grid"><div class="card">加载中…</div></div>
+      </section>
+
+      <!-- ============ 归档 ============ -->
+      <section id="view-archive" hidden>
+        <div class="page-title">归档（E-Hentai Archiver）</div>
+        <div class="page-sub">GP 购买的持久归档（zip/cbz 母本），可为同 gid/token 提供长效缓存。需 IPB 登录态与星会员；消耗 GP，请确认后操作。</div>
+        <div class="stack" id="archive-content"><div class="card">加载中…</div></div>
       </section>
 
       <!-- ============ 配置 ============ -->
@@ -175,8 +183,8 @@ async function getJSON(url) {
 }
 
 /* ---------------- 视图切换 ---------------- */
-const VIEWS = ["dashboard", "config", "home"];
-let loaded = { config: false, home: false };
+const VIEWS = ["dashboard", "config", "home", "archive"];
+let loaded = { config: false, home: false, archive: false };
 
 function switchView(name) {
   VIEWS.forEach((v) => {
@@ -192,6 +200,7 @@ document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
     switchView(v);
     if (v === "config" && !loaded.config) { loaded.config = true; loadConfig(); }
     if (v === "home" && !loaded.home) { loaded.home = true; loadHome(); }
+    if (v === "archive" && !loaded.archive) { loaded.archive = true; loadArchive(); }
   });
 });
 
@@ -338,6 +347,175 @@ async function clearDiskCache() {
     if (btn) { btn.disabled = false; btn.textContent = "清空缓存"; }
     loadDashboard();
   }
+}
+
+/* ---------------- 归档 ---------------- */
+let archiveTimer = null;
+
+function archiveBadge(status) {
+  const map = {
+    ready: ["green", "可用"], downloading: ["blue", "下载中"],
+    zipping: ["blue", "转换中"], pending: ["yellow", "准备中"],
+    failed: ["red", "失败"], quoting: ["gray", "报价中"], absent: ["gray", "无"],
+  };
+  const [cls, label] = map[status] || ["gray", status];
+  return badge(label, cls);
+}
+
+async function loadArchive() {
+  if (archiveTimer) { clearTimeout(archiveTimer); archiveTimer = null; }
+  const wrap = document.getElementById("archive-content");
+  let data;
+  try {
+    data = await getJSON("/api/archive");
+  } catch (e) {
+    wrap.innerHTML = card("错误", '<div class="err">' + esc(String(e)) + "</div>");
+    return;
+  }
+  const st = data.stats || {};
+  const statusText = Object.entries(st.by_status || {})
+    .map(([k, v]) => k + ": " + v).join("，") || "（无）";
+  const statCard = card("统计",
+    '<div class="stat-grid">'
+    + '<div><div class="stat">' + esc(st.entries || 0) + '</div><div class="stat-label">条目</div></div>'
+    + '<div><div class="stat">' + esc(st.ready || 0) + '</div><div class="stat-label">可用</div></div>'
+    + '<div><div class="stat">' + esc(fmtBytes(st.bytes)) + '</div><div class="stat-label">占用</div></div>'
+    + "</div>"
+    + kv("状态分布", esc(statusText)));
+
+  const addCard = card("添加任务",
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + '<input id="arc-url" placeholder="图库 URL：https://e-hentai.org/g/{gid}/{token}/ 或 archiver.php?gid=&token=" style="flex:1;min-width:280px" class="mono">'
+    + '<button class="btn" onclick="quoteArchive()">查询报价</button>'
+    + "</div>"
+    + '<div class="note" style="margin-top:4px">支持图库页 URL、archiver URL，或直接输入 “gid token”。</div>'
+    + '<div id="arc-quote" style="margin-top:10px"></div>');
+
+  const entries = data.entries || [];
+  const rows = entries.map((e) =>
+    "<tr>"
+    + '<td class="mono">' + esc(e.gid) + "</td>"
+    + '<td class="mono">' + esc(e.token) + "</td>"
+    + "<td>" + esc(e.title || "—") + "</td>"
+    + "<td>" + esc(e.quality || "—") + "</td>"
+    + "<td>" + archiveBadge(e.status) + "</td>"
+    + '<td class="mono">' + esc(fmtBytes(e.archive_size || e.part_size)) + "</td>"
+    + "<td>" + (e.page_count ? esc(e.page_count) : "—") + "</td>"
+    + "<td>" + (e.error ? '<div class="err" style="font-size:12px">' + esc(e.error) + "</div>" : "—") + "</td>"
+    + "<td>"
+    + `<button class="btn" onclick="refreshArchive(${e.gid},'${e.token}')">刷新</button> `
+    + `<button class="btn danger" onclick="deleteArchive(${e.gid},'${e.token}')">删除</button>`
+    + "</td>"
+    + "</tr>"
+  ).join("");
+  const listCard = card("归档列表（" + entries.length + "）",
+    entries.length
+      ? '<table><thead><tr><th>gid</th><th>token</th><th>标题</th><th>档位</th><th>状态</th><th>大小</th><th>页数</th><th>错误</th><th>操作</th></tr></thead><tbody>'
+        + rows + "</tbody></table>"
+      : '<span class="muted">暂无归档。输入 gid/token 查询报价后添加。</span>');
+
+  wrap.innerHTML = statCard + addCard + listCard;
+  const view = document.getElementById("view-archive");
+  if (view && !view.hidden) archiveTimer = setTimeout(loadArchive, 10000);
+}
+
+async function quoteArchive() {
+  const parsed = parseGalleryInput(document.getElementById("arc-url").value);
+  if (!parsed) {
+    alert("无法从输入解析 gid/token。支持：\n· https://e-hentai.org/g/{gid}/{token}/\n· https://e-hentai.org/archiver.php?gid=...&token=...\n· gid token");
+    return;
+  }
+  const q = document.getElementById("arc-quote");
+  q.innerHTML = '<span class="note">查询中…（不消耗 GP）</span>';
+  try {
+    const j = await getJSON("/api/archive/" + parsed.gid + "/" + parsed.token + "/quote");
+    const avail = (j.options || []).filter((o) => o.available);
+    const unavail = (j.options || []).filter((o) => !o.available);
+    if (avail.length) {
+      const opts = avail.map((o) =>
+        '<option value="' + esc(o.or) + '">' + esc(o.label)
+        + (o.unlocked ? "（已解锁）" : "")
+        + " · " + esc(o.gp_price ? o.gp_price.toLocaleString() + " GP" : "Free")
+        + (o.size ? " · " + esc(o.size) : "") + "</option>").join("");
+      q.innerHTML = '<div class="note">标题：' + esc(j.title || "（未知）")
+        + (j.gp_balance ? " · 账户余额：" + esc(j.gp_balance.toLocaleString()) + " GP" : "") + "</div>"
+        + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
+        + '<select id="arc-quality">' + opts + "</select>"
+        + `<button class="btn danger" onclick="startArchive(${parsed.gid},'${parsed.token}')">确认并开始</button>`
+        + "</div>"
+        + (unavail.length ? '<div class="note" style="margin-top:6px">不可用档：' + unavail.map((o) => esc(o.label)).join("、") + "</div>" : "");
+    } else {
+      q.innerHTML = '<div class="err">无可用的画质档' + (j.error ? "：" + esc(j.error) : "") + "</div>";
+    }
+  } catch (e) {
+    q.innerHTML = '<div class="err">' + esc(String(e)) + "</div>";
+  }
+}
+
+async function startArchive(gid, token) {
+  const qualityEl = document.getElementById("arc-quality");
+  const quality = qualityEl ? qualityEl.value : undefined;
+  if (!confirm("确认触发归档？\n档位：" + (quality || "默认")
+    + "\n未解锁档将消耗账户 GP；已解锁/免费档不消耗。")) return;
+  try {
+    const r = await fetch("/api/archive/" + gid + "/" + token + "/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(quality ? { quality: quality } : {}),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert("启动失败：" + (j.detail || j.error || "HTTP " + r.status));
+      return;
+    }
+  } catch (e) {
+    alert("启动失败：" + e);
+    return;
+  }
+  document.getElementById("arc-quote").innerHTML = '<span class="note">已提交，任务在后台执行（准备→下载→校验）。</span>';
+  loadArchive();
+}
+
+function parseGalleryInput(raw) {
+  const s = (raw || "").trim();
+  let m = s.match(/\/(?:g|mpv)\/(\d+)\/([0-9a-fA-F]+)/);
+  if (m) return { gid: m[1], token: m[2] };
+  m = s.match(/(?:gid|g)=?(\d+)[^0-9a-fA-F]+(?:token|t)=?([0-9a-fA-F]+)/);
+  if (m) return { gid: m[1], token: m[2] };
+  m = s.match(/^(\d+)[\s,;]+([0-9a-fA-F]{8,})$/);
+  if (m) return { gid: m[1], token: m[2] };
+  return null;
+}
+
+async function refreshArchive(gid, token) {
+  try {
+    const r = await fetch("/api/archive/" + gid + "/" + token + "/refresh", {
+      method: "POST", headers: { "Accept": "application/json" },
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert("刷新失败：" + (j.detail || j.error || "HTTP " + r.status));
+      return;
+    }
+  } catch (e) {
+    alert("刷新失败：" + e);
+    return;
+  }
+  loadArchive();
+}
+
+async function deleteArchive(gid, token) {
+  if (!confirm("删除归档 " + gid + "？\n仅删除本地文件；E-Hentai 账户上的归档记录保留，可随时重新下载（不消耗 GP）。")) return;
+  try {
+    const r = await fetch("/api/archive/" + gid + "/" + token, {
+      method: "DELETE", headers: { "Accept": "application/json" },
+    });
+    if (!r.ok) { alert("删除失败：HTTP " + r.status); return; }
+  } catch (e) {
+    alert("删除失败：" + e);
+    return;
+  }
+  loadArchive();
 }
 
 /* ---------------- 启动 ---------------- */

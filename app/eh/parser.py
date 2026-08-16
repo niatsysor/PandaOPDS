@@ -16,6 +16,8 @@ from lxml import html
 from .exceptions import ParseError
 from .languages import map_language
 from .models import (
+    ArchiveOption,
+    ArchiverPageInfo,
     DetailPageInfo,
     GalleryComment,
     GalleryListItem,
@@ -903,3 +905,152 @@ def parse_gdata_response(body: str) -> list[GalleryMetadata]:
             )
         )
     return out
+
+
+# --------------------------------------------------------------------------
+# Archiver page (/archiver.php)
+# --------------------------------------------------------------------------
+
+# Page-level error markers -> (substring, message). The manager maps the
+# message to a concrete exception type.
+_ARCHIVER_ERROR_MARKERS = [
+    ("Star member", "Archiver requires Star membership"),
+    ("enough GP", "Insufficient GP on account"),
+    ("cannot be archived", "Gallery cannot be archived"),
+    ("not available for archiving", "Gallery cannot be archived"),
+    ("archiver is currently unavailable", "Archiver unavailable"),
+]
+# Page text markers for the preparing (queued upstream) state.
+_PREPARING_MARKERS = ("preparing file for download", "being prepared")
+_READY_MARKER = "successfully prepared"
+# "Download Cost: Free!" / "Download Cost: 315,000 GP" rows.
+_GP_PRICE_RE = re.compile(r"([\d,]+)\s*GP", re.I)
+_FUNDS_RE = re.compile(r"Current\s+Funds:.*?([\d,]+)\s*GP", re.I | re.S)
+# "You unlocked an original download of this archive on ..."
+_UNLOCKED_RE = re.compile(r"You\s+unlocked\s+(.+?)\s+download\s+of\s+this\s+archive", re.I)
+
+
+def _abs_url(href: str, page_url: str) -> str:
+    """Resolve a possibly-relative href against the page's URL."""
+    if href.startswith(("http://", "https://")):
+        return href
+    if not page_url:
+        return href
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(page_url)
+    if href.startswith("/"):
+        return urlunsplit((parts.scheme, parts.netloc, href, "", ""))
+    base = parts.path.rsplit("/", 1)[0] + "/"
+    return urlunsplit((parts.scheme, parts.netloc, base + href, "", ""))
+
+
+def _parse_gp_price(text: str) -> int:
+    """Extract the GP price from a 'Download Cost' row ('Free!' / '315,000 GP')."""
+    if not text:
+        return 0
+    if "free" in text.lower():
+        return 0
+    m = _GP_PRICE_RE.search(text)
+    if not m:
+        return 0
+    try:
+        return int(m.group(1).replace(",", ""))
+    except ValueError:
+        return 0
+
+
+def parse_archiver_page(html_text: str, page_url: str | None = None) -> ArchiverPageInfo:
+    """Parse an archiver.php page (tier list / preparing / ready states).
+
+    Mirrors the real markup: one ``<form>`` per tier carrying ``dltype`` +
+    ``dlcheck`` (gid/token live in the form action query, not as hidden
+    inputs). The ``#hathdl_form`` (H@H resolution downloader) is excluded.
+    """
+    doc = html.fromstring(html_text)
+    page_text = " ".join(doc.itertext())
+
+    info = ArchiverPageInfo()
+    info.title = _text(_first(doc, "h1")) or _text(_first(doc, "h3"))
+
+    m = _FUNDS_RE.search(page_text)
+    if m:
+        try:
+            info.gp_balance = int(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # page-level errors (checked independent of form parsing)
+    for marker, message in _ARCHIVER_ERROR_MARKERS:
+        if marker.lower() in page_text.lower():
+            info.error = message
+            break
+
+    if _READY_MARKER in page_text.lower():
+        info.download_state = "ready"
+    elif any(m in page_text.lower() for m in _PREPARING_MARKERS):
+        info.download_state = "preparing"
+
+    # download URL: ready -> "?start=1" link; preparing -> hath.network URL
+    for a in _el(doc, "a[href]"):
+        href = _attr(a, "href")
+        if "?start=" in href:
+            info.download_url = _abs_url(href, page_url or "")
+            break
+        if "hath.network" in href:
+            info.download_url = href
+            break
+    if not info.download_url:
+        # #continue link on the preparing page
+        a = _first(doc, "#continue a")
+        if a is not None:
+            info.download_url = _abs_url(_attr(a, "href"), page_url or "")
+
+    # tier options: one form per tier (dltype + dlcheck submit)
+    unlocked = set()
+    for m in _UNLOCKED_RE.finditer(page_text):
+        tier = m.group(1).strip().lower()
+        if "original" in tier:
+            unlocked.add("org")
+        elif "resample" in tier:
+            unlocked.add("res")
+
+    seen: set[str] = set()
+    for form in _el(doc, "form"):
+        action = _attr(form, "action").lower()
+        if "archiver.php" not in action:
+            continue
+        dltype = _attr(_first(form, 'input[name="dltype"]'), "value")
+        if not dltype:
+            continue  # #hathdl_form / invalidate_form carry no dltype
+        submit = _first(form, 'input[name="dlcheck"]')
+        dlcheck = _attr(submit, "value")
+        if dltype in seen:
+            continue
+        seen.add(dltype)
+        label = dlcheck.removeprefix("Download ").strip() or dlcheck
+        # price + size live in the form's parent container column
+        cost = ""
+        size = ""
+        container = form.getparent()
+        if container is not None:
+            ctext = " ".join(container.itertext())
+            cm = _GP_PRICE_RE.search(ctext)
+            if "free" in ctext.lower():
+                cost = "free"
+            elif cm:
+                cost = cm.group(0)
+            sm = re.search(r"Estimated\s+Size:.*?([\d.]+\s*(?:KiB|MiB|GiB|TiB|KB|MB|GB))", ctext, re.I)
+            if sm:
+                size = sm.group(1)
+        info.options.append(
+            ArchiveOption(
+                or_value=dltype,
+                label=label,
+                dlcheck=dlcheck,
+                gp_price=_parse_gp_price(cost),
+                size=size,
+                available=_attr(submit, "disabled") == "",
+                unlocked=dltype in unlocked,
+            )
+        )
+    return info

@@ -59,6 +59,13 @@ class EHService:
             )
         )
         self.site_host = settings.site_host
+        # Optional archive manager (injected by main): when set, /stream serves
+        # pages straight from the persistent zip master before touching the
+        # disk LRU or the upstream pipeline.
+        self.archive = None
+
+    def attach_archive(self, manager) -> None:
+        self.archive = manager
 
     async def close(self) -> None:
         await self.client.close()
@@ -341,6 +348,13 @@ class EHService:
         # E-Hentai /s/ pageNo is 1-based
         page_no_1 = page_no if base == 1 else page_no + 1
 
+        # archived gallery: serve straight from the persistent zip master
+        # (long-term cache; never touches the LRU or the upstream pipeline)
+        if self.archive is not None:
+            data = await self.archive.get_page_bytes(gid, token, page_no_1)
+            if data is not None:
+                return data, detect_image_type(data)
+
         if self.disk.enabled:
             data = await self.disk.get(gid, token, page_no_1)
             if data is not None:
@@ -422,14 +436,17 @@ class EHService:
     # -- misc --------------------------------------------------------------
 
     async def stats(self) -> dict:
-        return {
+        out = {
             "throttle": {
                 "html_requests": self.throttle.html_requests,
                 "api_requests": self.throttle.api_requests,
                 "image_requests": self.throttle.image_requests,
-            "thumb_requests": self.throttle.thumb_requests,
+                "thumb_requests": self.throttle.thumb_requests,
                 "circuit_open": self.throttle.circuit.is_open,
             },
             "memory_cache": self.mem.stats,
             "disk_cache": self.disk.stats,
         }
+        if self.archive is not None:
+            out["archive"] = self.archive.stats()
+        return out

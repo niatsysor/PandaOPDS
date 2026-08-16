@@ -13,6 +13,7 @@ dependencies = [
     "lxml>=5.0",
     "cssselect>=1.2",
     "python-dotenv>=1.0",
+    "py7zr>=0.21",  # 7z -> zip conversion for rare 7z archives
 ]
 
 [project.optional-dependencies]

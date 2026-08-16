@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import httpx
 
@@ -296,6 +297,104 @@ class EHClient:
         resp = await self._request("POST", self.settings.api_url, json_body=payload)
         self._check_failure(resp)
         return resp.text
+
+    # -- archiver (GP-purchased archives) ---------------------------------
+
+    async def get_archiver_page(self, gid: int, token: str) -> str:
+        """GET /archiver.php for a gallery (tier list / status page).
+
+        Requires a logged-in Star-member session (established via
+        ``establish_session``). Returns the page HTML for parsing.
+        """
+        params = {"gid": str(gid), "token": token}
+        resp = await self._request(
+            "GET",
+            f"{self.settings.http_origin}/archiver.php",
+            params=params,
+            referer=f"{self.settings.http_origin}/g/{gid}/{token}/",
+        )
+        return resp.text
+
+    async def submit_archiver(
+        self, gid: int, token: str, dltype: str, dlcheck: str
+    ) -> str:
+        """POST /archiver.php to trigger an archive (tier ``dltype``).
+
+        Mirrors the real form: gid/token travel in the URL query (the form
+        action), the body carries ``dltype`` + ``dlcheck`` (the submit button
+        value). Free tiers (already unlocked) cost no GP; paid tiers debit GP
+        here. Returns the resulting page (preparing/ready/error).
+        """
+        resp = await self._request(
+            "POST",
+            f"{self.settings.http_origin}/archiver.php",
+            params={"gid": str(gid), "token": token},
+            form_data={"dltype": dltype, "dlcheck": dlcheck},
+            referer=(
+                f"{self.settings.http_origin}/archiver.php?gid={gid}&token={token}"
+            ),
+        )
+        return resp.text
+
+    async def stream_archive(
+        self,
+        url: str,
+        dest: Path,
+        *,
+        progress_cb=None,
+        offset: int = 0,
+    ) -> int:
+        """Stream-download an archive file (7z/zip) to ``dest``.
+
+        Overrides the default 6s timeout: GB-scale downloads need a generous
+        idle-read timeout (progress keeps the connection alive). Bytes are
+        written via a thread so the event loop never blocks. When ``offset``
+        is non-zero a ``Range: bytes={offset}-`` header resumes a partial
+        download (hath.network serves 206); a 200 reply means the server
+        ignored the range and the file restarts from scratch. Returns the
+        total bytes written; propagates mapped E-Hentai exceptions and
+        normalizes transport failures to ``EHException``.
+        """
+        timeout = httpx.Timeout(
+            connect=self.settings.timeout_seconds,
+            read=600.0,  # 10 min idle-read; active progress resets it
+            write=60.0,
+            pool=self.settings.timeout_seconds,
+        )
+        headers = {"Referer": f"{self.settings.http_origin}/archiver.php"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        total = 0
+        try:
+            async with self._client.stream(
+                "GET", url, headers=headers, timeout=timeout
+            ) as resp:
+                if resp.status_code == 403:
+                    raise CloudflareError("403 from archive host")
+                if resp.status_code == 404:
+                    raise EHException(
+                        "archive download 404 (link expired; re-trigger the archive)"
+                    )
+                if resp.status_code >= 400:
+                    raise EHServerError(
+                        f"archive host returned HTTP {resp.status_code}",
+                        retryable=True,
+                    )
+                # 206 with an offset resumes; 200 (server ignored Range)
+                # restarts from scratch; a bare 206 at offset=0 is fine too.
+                resumed = resp.status_code == 206 and offset > 0
+                mode = "ab" if resumed else "wb"
+                with dest.open(mode) as fh:
+                    async for chunk in resp.aiter_bytes():
+                        await asyncio.to_thread(fh.write, chunk)
+                        total += len(chunk)
+                        if progress_cb:
+                            progress_cb(total)
+            return offset + total if resumed else total
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise EHException(
+                f"archive download failed (transport): {exc}"
+            ) from exc
 
     async def fetch_image_bytes(
         self,

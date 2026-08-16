@@ -36,6 +36,7 @@ PandaOPDS/
 | `GET https://e-hentai.org/g/{gid}/{token}/?p={n}` | 图库详情页（缩略图每页 20 个，`?p` 翻页） |
 | `GET https://e-hentai.org/s/{imageToken}/{gid}-{pageNo}` | 单图片页（pageNo **1-based**），解析 `#img` src 得真实图片 URL |
 | `https://e-hentai.org/popular` | 热门；`/favorites.php` 收藏；`/toplist.php` 排行榜（`?tl=` 周期：15=昨天/13=近一月/12=近一年/11=全部，`?p=` 翻页） |
+| `GET https://e-hentai.org/archiver.php?gid=&token=` | **归档（archiver）**：需登录 + 星会员，消费 GP。页面每档一个表单（`dltype`=org/res + `dlcheck` 提交按钮）+ 档位价格（`Download Cost: Free!/XXX GP`）+ `Estimated Size`；`POST` 同 URL（body 仅 `dltype`+`dlcheck`，gid/token 在 URL 查询参数）触发归档 → 返回 preparing 页（含 `https://{node}.hath.network/archive/...` 状态 URL）→ 轮询该 URL 至 “successfully prepared” → 页内 `?start=1` 链接即最终下载（zip，支持 HTTP Range 续传）。已解锁/免费档（页面 `Free!`/`You unlocked ...`）POST 不扣 GP |
 
 exhentai.org 对应域名：`exhentai.org`（页面）、`exhentai.org/api.php`（API）。注意 `/toplist.php` 仅 e-hentai.org 提供（exhentai 无此页面），Toplist 路由因此恒请求 e-hentai.org（service 层硬编码，属预期设计）。
 
@@ -112,6 +113,21 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比单用�
 | 图库元数据（gdata 结果） | 内存 | 10min | 主链路不再触发（详情走详情页 HTML）；保留 service 层作兜底/测试（`METADATA_TTL_SECONDS`），~1-2KB/条 |
 | 页面 URL 映射（/s/ 列表） | 内存 | 1h | 避免重复翻页 |
 | 图片字节 | 磁盘 LRU | 7 天 | 默认 4GB（环境变量 `CACHE_DIR`/`CACHE_MAX_GB` 可调），可关 |
+| 归档 zip 母本（`ARCHIVE_DIR`） | 磁盘持久 | 永久 | 用户显式管理（WebUI 删除）；不受 LRU/7 天 TTL 约束；`/stream` 命中归档页优先于磁盘缓存，不回填 LRU |
+
+### 归档（Archiver，GP 购买的持久缓存）
+
+E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 WebUI/API **显式触发**（quote 报价 → 确认 → start，绝无自动触发），下载后**统一保存为 zip（cbz）母本**，作为该 gid/token 的**长效缓存**（`/stream` 命中优先于磁盘 LRU 与上游，读后不回填）。
+
+- **启用条件**：派生 `bool(ipb_member_id and ipb_pass_hash)`（无独立开关）；无登录态时归档 API 返回 403。
+- **画质**：档位由 archiver 页面提供（`dltype`：`org`=Original 无损、`res`=Resample 等），每档显示 `Download Cost`（Free!/GP 价格）+ `Estimated Size` + 可用性（disabled）。`start` API 传 `quality`（默认 `ARCHIVE_QUALITY=original`，经 `_match_option` 匹配 dltype/标签/别名映射 original→org）；WebUI 报价后提供下拉选择。
+- **流程（真实结构，2026-08 实测）**：`GET archiver.php?gid=&token=`（档位页，gid/token 在 form action URL）→ `POST` 同 URL（body `dltype`+`dlcheck`，已解锁/免费档不扣 GP）→ preparing 页（含 `*.hath.network/archive/...` 状态 URL）→ 轮询至 “successfully prepared” → 页内 `?start=1` 链接即最终下载（zip，支持 Range 断点续传）。**无 `or`/`archive` 字段、无 fetch.php**。
+- **存储**：`ARCHIVE_DIR/{gid}/{token}/` → `archive.zip`（统一母本，zip 内 entry 顺序 = 页序）+ `meta.json`（原子写；状态机 `pending → downloading → zipping → ready | failed`）。7z 归档下载后后台转 zip（`py7zr`）再校验，临时文件删除。
+- **校验**：zip 可打开 + 条目数 > 0 + 抽查首页；不符置 `failed`（保留文件备查，可删除重试）。
+- **并发**：`ARCHIVE_DOWNLOAD_CONCURRENCY`（默认 5）个活跃任务（下载/7z 转换）共享信号量，其余排队；归档流量不受阅读限流池约束，但**仍过熔断检查**（banned/exceed 时暂停）。
+- **下载**：`?start=1` 流式写 `.part`（覆盖 6s 默认超时，长读超时 600s）；`stream_archive` 支持 `Range: bytes={offset}-` 断点续传（hath 服务 206）；状态 URL 过期/失败 → 重新 POST 重准备。
+- **删除**：仅删本地文件；E-Hentai 账户归档记录保留，可随时重下。
+- **架构**：`app/archive/store.py`（持久目录：扫描重建索引/meta 原子写/zip 页读取）+ `app/archive/manager.py`（状态机/单飞行/并发/下载→格式检测→zip 化→校验）+ `app/archive/router.py`（`/api/archive/*`）；`EHService.get_image()` 在磁盘 LRU 前查 `archive.get_page_bytes()`；archiver 页面解析在 `app/eh/parser.py::parse_archiver_page`（真实结构：dltype 表单 + Download Cost/Estimated Size/unlocked 解析 + hath/start 链接提取 + 错误文案映射 `ArchiverUnavailableError`/`InsufficientGPError`）。
 
 ## OPDS-PSE 规范要点（服务端必须严格遵循，v1.2 与 v2.0 共用串流语义）
 
@@ -163,6 +179,12 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比单用�
 | `GET /api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
 | `GET /api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
 | `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
+| `GET /api/archive` | JSON：归档列表 + 统计（数量/可用/占用/状态分布） |
+| `GET /api/archive/{gid}/{token}/quote` | 归档报价：标题 + GP 余额 + 各档位（dltype/label/价格 Free 或 GP/大小/可用性/已解锁）（**不扣 GP，不发任务**） |
+| `POST /api/archive/{gid}/{token}/start` | 触发归档（body `{"quality": "org"}`，缺省 `ARCHIVE_QUALITY`；`_match_option` 匹配 dltype/标签/别名）并开始后台任务；免费/已解锁档不扣 GP |
+| `GET /api/archive/{gid}/{token}` | 单条状态/进度（含 active、download_url） |
+| `DELETE /api/archive/{gid}/{token}` | 删除本地归档（取消任务 + 删文件；账户归档记录保留，可重下） |
+| `POST /api/archive/{gid}/{token}/refresh` | 重新 POST 重准备并重下（免费档不扣 GP） |
 
 根路径 `/` 与 `/api/*` 命名空间由 WebUI 独占（勿在其上挂新路由）；`/health` 为独立探活端点（`app/main.py`），互不冲突。
 

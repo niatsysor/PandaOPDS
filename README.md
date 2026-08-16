@@ -36,6 +36,13 @@ docker compose up -d --build
 | `GET /api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
 | `GET /api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
 | `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
+| `GET /api/archive` | JSON：归档列表 + 统计 |
+| `GET /api/archive/{gid}/{token}/quote` | 归档报价（标题/画质/GP 价格，不扣 GP） |
+| `POST /api/archive/{gid}/{token}/start` | 购买并开始归档任务（消耗 GP；已购直接重下） |
+| `GET/DELETE /api/archive/{gid}/{token}` | 单条状态 / 删除本地归档 |
+| `POST /api/archive/{gid}/{token}/refresh` | 重新下载（不扣 GP） |
+
+- **归档（Archiver）**：WebUI 的「归档」视图通过上述 API 管理 GP 购买的持久归档——输入图库 URL 查询报价 → 选画质确认 → 后台下载统一保存为 zip（cbz）母本于 `ARCHIVE_DIR`，`/stream` 对该图库直接读归档页（长效缓存，不受磁盘 LRU/7 天 TTL 约束）。需登录态与星会员；未解锁档消耗 GP，请确认后操作。
 
 - 前端为单 HTML（内联 CSS/JS，无构建链、无 CDN 依赖），消费上述 JSON API；未来功能（离线项目管理、自动化工作流）扩展 API 层即可，页面契约不变。
 - **安全**：`IPB_PASS_HASH` / `IGNEOUS` 永不回传明文（页面与 API 均只显示占位符）。`IPB_MEMBER_ID` 为登录标识，会完整展示。
@@ -56,6 +63,9 @@ docker compose up -d --build
 | `CACHE_DIR` | `./cache` | 图片磁盘缓存目录 |
 | `CACHE_MAX_GB` | `4` | 磁盘缓存上限（GB） |
 | `IMAGE_CACHE_ENABLED` | `true` | 设为 `false` 关闭磁盘缓存 |
+| `ARCHIVE_DIR` | `./archives` | 归档持久目录（zip 母本 + meta.json；建议独立卷） |
+| `ARCHIVE_QUALITY` | `original` | 默认画质档（start 未传 quality 时） |
+| `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载/7z 转换并发上限，其余排队 |
 | `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；docker-compose 预设 `1.5` |
 | `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；docker-compose 预设 `2` |
 | `IMAGE_MAX_CONCURRENCY` | `5` | 全图（`/stream` 原图）并发上限：509 配额流量，保守 |

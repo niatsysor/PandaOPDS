@@ -206,6 +206,29 @@ def _settings_groups(s: Settings) -> list[dict]:
                 ),
             ],
         },
+        {
+            "id": "archive",
+            "title": "归档（archiver）",
+            "fields": [
+                _field(
+                    "archive_dir", "归档数据目录", str(s.archive_dir),
+                    note="持久目录：zip 母本 + meta.json；不受磁盘缓存 LRU/7 天 TTL 约束",
+                ),
+                _field(
+                    "archive_quality", "默认画质档位", s.archive_quality,
+                    note="start API 未传 quality 时的默认档（匹配 archiver 页面选项，默认 original 无损）",
+                ),
+                _field(
+                    "archive_download_concurrency", "归档任务并发", s.archive_download_concurrency,
+                    note="下载/7z 转换并发上限，其余排队；不受阅读限流约束（仍过熔断）",
+                ),
+                _field(
+                    "archive_enabled", "启用条件",
+                    "开（已配置 IPB 登录态）" if bool(s.ipb_member_id and s.ipb_pass_hash) else "关（需 IPB_MEMBER_ID + IPB_PASS_HASH）",
+                    note="archiver 为会员服务（星会员 + GP）；无登录态时归档 API 返回 403",
+                ),
+            ],
+        },
     ]
 
 
@@ -219,6 +242,7 @@ def _derived(s: Settings) -> dict:
         "has_ipb": bool(s.ipb_member_id and s.ipb_pass_hash),
         "auth_enabled": s.auth_enabled,
         "auth_exempt_paths": sorted(s.auth_exempt_paths),
+        "archive_enabled": bool(s.ipb_member_id and s.ipb_pass_hash),
     }
 
 
@@ -282,6 +306,11 @@ async def api_status(request: Request):
         "circuit": service.throttle.circuit.state,
         "memory_cache": {**mem, "max_entries": service.mem.max_entries},
         "disk_cache": disk,
+        "archive": (
+            request.app.state.archive.stats()
+            if getattr(request.app.state, "archive", None) is not None
+            else None
+        ),
         "home": {
             "path": str(s.home_config_path),
             "using_file": using_file,

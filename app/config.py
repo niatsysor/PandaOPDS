@@ -138,6 +138,22 @@ class Settings:
     # disable profiles and rely on the per-request ``inline_set`` override.
     eh_profile: str = "PandaOPDS"
 
+    # --- Archive (E-Hentai archiver, GP-purchased) ---
+    # Persistent data directory holding purchased archives as unified zip
+    # (cbz) masters + meta.json per gallery. Independent of the disk LRU
+    # cache: no TTL, no size cap, user-managed lifecycle. Enabled implicitly
+    # when IPB cookies are configured (the archiver requires a logged-in
+    # Star-member session); all archive APIs return 403 without them.
+    # ARCHIVE_QUALITY: default quality tier when the start API omits one
+    # (matched against the archiver page option label; default "original").
+    # ARCHIVE_DOWNLOAD_CONCURRENCY: max concurrently active archive tasks
+    # (download or 7z->zip conversion); the rest queue. Archive downloads are
+    # not subject to the reading-traffic throttle, but still pass the circuit
+    # breaker (banned / image-limit trips pause them).
+    archive_dir: Path = field(default_factory=lambda: Path("./archives"))
+    archive_quality: str = "original"
+    archive_download_concurrency: int = 5
+
     # --- Home navigation (TOML-driven layout) ---
     # Path to a TOML file declaring ``[[group]]`` and ``[[navigation]]``
     # sections.  Each section is a ``(type, query)`` pair:
@@ -350,5 +366,8 @@ def load_settings() -> Settings:
         eh_profile=os.getenv("EH_PROFILE", "PandaOPDS").strip(),
         home_config_path=Path(os.getenv("HOME_CONFIG", "./config/home.toml")),
         facets=_facets(os.getenv("FACETS")),
+        archive_dir=Path(os.getenv("ARCHIVE_DIR", "./archives")),
+        archive_quality=(os.getenv("ARCHIVE_QUALITY", "original").strip().lower() or "original"),
+        archive_download_concurrency=_int(os.getenv("ARCHIVE_DOWNLOAD_CONCURRENCY"), 5),
     )
     return settings

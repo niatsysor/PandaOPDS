@@ -238,3 +238,44 @@ class ImagePageInfo:
     height: float | None = None
     reload_key: str | None = None
     is_509: bool = False
+
+
+@dataclass
+class ArchiveOption:
+    """One archive tier offered by the archiver page (real markup).
+
+    ``or_value`` is the form's ``dltype`` value (org/res/...); ``label`` is
+    the submit-button text minus the leading "Download " (e.g. "Original
+    Archive"); ``dlcheck`` is the full submit-button value sent back on POST.
+    ``gp_price`` is parsed from the adjacent "Download Cost" row (Free -> 0,
+    "315,000 GP" -> 315000). ``unlocked`` is true when the page shows the
+    "You unlocked ... download of this archive" row for this tier (already
+    paid for / free — POST then only re-triggers the download).
+    """
+
+    or_value: str  # dltype: org | res | ...
+    label: str = ""
+    dlcheck: str = ""  # submit value: "Download Original Archive"
+    gp_price: int = 0
+    size: str = ""  # "Estimated Size" row, e.g. "1.06 GiB"
+    available: bool = True  # False when the submit button is disabled
+    unlocked: bool = False
+
+
+@dataclass
+class ArchiverPageInfo:
+    """Parsed archiver.php page: tiers + download progress.
+
+    ``download_state``: ``""`` (tier page), ``"preparing"`` (archive is being
+    prepared upstream; ``download_url`` carries the hath.network status URL)
+    or ``"ready"`` (``download_url`` carries the final ``?start=1`` link).
+    ``error`` carries a page-level message (non-member / gallery cannot be
+    archived) — the manager maps it to exceptions.
+    """
+
+    title: str = ""
+    options: list[ArchiveOption] = field(default_factory=list)
+    download_state: str = ""  # "" | "preparing" | "ready"
+    download_url: str = ""  # absolute; preparing/status URL or final download
+    error: str = ""
+    gp_balance: int = 0
