@@ -41,6 +41,10 @@ ST_FAILED = "failed"          # terminal, retryable (start again)
 META_FILENAME = "meta.json"
 ARCHIVE_FILENAME = "archive.zip"
 PART_FILENAME = "archive.part"
+# Local gdata metadata + cover snapshot (regenerable; separate from meta.json,
+# which is the state machine's source of truth).
+METADATA_FILENAME = "metadata.json"
+COVER_FILENAME = "cover.jpg"
 
 # Terminal-ish states: a ready entry backs /stream; failed entries are kept
 # on disk for inspection and can be restarted.
@@ -62,6 +66,7 @@ _META_FIELDS = (
     "created_at",
     "updated_at",
     "error",
+    "metadata_at",  # unix ts of the last successful gdata snapshot
 )
 
 
@@ -94,6 +99,12 @@ class ArchiveStore:
 
     def part_path(self, gid: int, token: str) -> Path:
         return self.entry_dir(gid, token) / PART_FILENAME
+
+    def metadata_path(self, gid: int, token: str) -> Path:
+        return self.entry_dir(gid, token) / METADATA_FILENAME
+
+    def cover_path(self, gid: int, token: str) -> Path:
+        return self.entry_dir(gid, token) / COVER_FILENAME
 
     def key(self, gid: int, token: str) -> str:
         return f"{gid}:{token}"
@@ -206,6 +217,28 @@ class ArchiveStore:
         await asyncio.to_thread(tmp.write_text, data, "utf-8")
         await asyncio.to_thread(os.replace, tmp, path)
 
+    async def write_metadata_snapshot(self, gid: int, token: str, payload: dict) -> None:
+        """Persist a gdata metadata snapshot (metadata.json), atomically.
+
+        A local copy of upstream metadata + cover info, separate from
+        meta.json (the state machine's source of truth) and regenerable on
+        demand. The whole entry directory is removed together on delete.
+        """
+        await self._atomic_write(self.metadata_path(gid, token), payload)
+
+    def read_metadata_snapshot(self, gid: int, token: str) -> dict | None:
+        """Read the persisted gdata snapshot (None when absent/unreadable)."""
+        try:
+            return json.loads(
+                self.metadata_path(gid, token).read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    async def write_cover(self, gid: int, token: str, data: bytes) -> None:
+        """Persist the local cover copy (cover.jpg)."""
+        await asyncio.to_thread(self.cover_path(gid, token).write_bytes, data)
+
     async def remove(self, gid: int, token: str) -> bool:
         """Delete the whole entry directory (meta + zip + part).
 
@@ -247,6 +280,7 @@ class ArchiveStore:
         by_status: dict[str, int] = {}
         total_bytes = 0
         ready = 0
+        with_metadata = 0
         for key, meta in self._entries.items():
             gid, token = key.split(":", 1)
             status = meta.get("status", ST_ABSENT)
@@ -255,11 +289,14 @@ class ArchiveStore:
             total_bytes += zip_bytes + part_bytes
             if status == ST_READY:
                 ready += 1
+            if meta.get("metadata_at"):
+                with_metadata += 1
         return {
             "entries": len(self._entries),
             "ready": ready,
             "by_status": by_status,
             "bytes": total_bytes,
+            "with_metadata": with_metadata,
         }
 
     # -- zip page reads ----------------------------------------------------

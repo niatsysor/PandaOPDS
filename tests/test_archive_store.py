@@ -143,3 +143,41 @@ async def test_stats(tmp_path):
     assert st["ready"] == 1
     assert st["by_status"] == {"ready": 1, "downloading": 1}
     assert st["bytes"] > 0
+
+
+@pytest.mark.asyncio
+async def test_metadata_snapshot_roundtrip(tmp_path):
+    store = ArchiveStore(tmp_path)
+    await store.upsert(1, "t", {"title": "T", "status": ST_READY})
+    await store.write_metadata_snapshot(
+        1, "t",
+        {"gid": 1, "token": "t", "title": "T", "saved_at": 123.0,
+         "cover_mime": "image/jpeg"},
+    )
+    snap = store.read_metadata_snapshot(1, "t")
+    assert snap["title"] == "T" and snap["cover_mime"] == "image/jpeg"
+    # the snapshot is a separate file: meta.json is untouched by it
+    assert store.get(1, "t").get("metadata_at") is None
+    # metadata_at is a persisted meta field once the manager records it
+    await store.upsert(1, "t", {"metadata_at": 456.0})
+    assert store.get(1, "t")["metadata_at"] == 456.0
+
+
+@pytest.mark.asyncio
+async def test_metadata_snapshot_and_cover_removed_with_entry(tmp_path):
+    store = ArchiveStore(tmp_path)
+    await store.upsert(1, "t", {"status": ST_READY})
+    await store.write_metadata_snapshot(1, "t", {"title": "T"})
+    await store.write_cover(1, "t", b"JPEGDATA")
+    assert store.metadata_path(1, "t").exists()
+    assert store.cover_path(1, "t").exists()
+    await store.remove(1, "t")
+    assert not store.entry_dir(1, "t").exists()
+
+
+@pytest.mark.asyncio
+async def test_metadata_snapshot_stats_counted(tmp_path):
+    store = ArchiveStore(tmp_path)
+    await store.upsert(1, "a", {"status": ST_READY})
+    await store.upsert(2, "b", {"status": ST_READY, "metadata_at": 1.0})
+    assert store.stats()["with_metadata"] == 1

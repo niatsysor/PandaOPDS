@@ -74,6 +74,8 @@ Content-Type: application/json
 
 缩略图 `/image/{gid}/{token}/thumb` 同样不依赖 gdata：优先命中列表解析时写入的 cover 内存缓存，冷未命中回退详情页第 0 页第一个缩略图（1 次 HTML 请求服务 20 个 `/stream`）。
 
+**例外：归档链路（显式操作，不计入浏览链路）**——归档下载成功或手动“刷新元数据”时调用 gdata（`get_metadata`，单 gid 单请求）拉取最新元数据并本地持久化快照（`metadata.json` + `cover.jpg`），封面从 gdata thumb URL 下载（ehgt.org CDN，走缩略图限流池）。此为显式用户操作，与“浏览阶段零 gdata”约定不冲突；刷新时 `force=True` 绕过 gdata 内存缓存（10min TTL）强制更新。
+
 ### 页面 URL 获取（无 API 替代，必须抓详情页）
 
 详情页 `?p={n}` 每页 20 个缩略图，解析 `#gdt`（2024-10-15 起有两种结构，**都要支持**）：
@@ -122,7 +124,8 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 - **启用条件**：派生 `bool(ipb_member_id and ipb_pass_hash)`（无独立开关）；无登录态时归档 API 返回 403。
 - **画质**：档位由 archiver 页面提供（`dltype`：`org`=Original 无损、`res`=Resample 等），每档显示 `Download Cost`（Free!/GP 价格）+ `Estimated Size` + 可用性（disabled）。`start` API 传 `quality`（默认 `ARCHIVE_QUALITY=original`，经 `_match_option` 匹配 dltype/标签/别名映射 original→org）；WebUI 报价后提供下拉选择。
 - **流程（真实结构，2026-08 实测）**：`GET archiver.php?gid=&token=`（档位页，gid/token 在 form action URL）→ `POST` 同 URL（body `dltype`+`dlcheck`，已解锁/免费档不扣 GP）→ preparing 页（含 `*.hath.network/archive/...` 状态 URL）→ 轮询至 “successfully prepared” → 页内 `?start=1` 链接即最终下载（zip，支持 Range 断点续传）。**无 `or`/`archive` 字段、无 fetch.php**。
-- **存储**：`ARCHIVE_DIR/{gid}/{token}/` → `archive.zip`（统一母本，zip 内 entry 顺序 = 页序）+ `meta.json`（原子写；状态机 `pending → downloading → zipping → ready | failed`）。7z 归档下载后后台转 zip（`py7zr`）再校验，临时文件删除。
+- **存储**：`ARCHIVE_DIR/{gid}/{token}/` → `archive.zip`（统一母本，zip 内 entry 顺序 = 页序）+ `meta.json`（原子写；状态机 `pending → downloading → zipping → ready | failed`）+ `metadata.json`（gdata 快照：全量元数据 + `saved_at` + `cover_mime`，独立于 meta.json，可随时重新生成）+ `cover.jpg`（封面本地副本）。7z 归档下载后后台转 zip（`py7zr`）再校验，临时文件删除。
+- **元数据快照**：归档下载成功（`ready`）后自动触发，`EHService.get_metadata()`（gdata，走 API 限流池）→ `dataclasses.asdict` 全量序列化（含完整 tags/status/style）写入 `metadata.json`，封面经 `fetch_cover_bytes(meta.thumb)`（ehgt.org CDN，KIND_THUMB 池）写入 `cover.jpg`，`meta.json` 记录 `metadata_at` 时间戳；快照失败仅告警不失败任务（条目保持 ready），封面失败不影响元数据写入。刷新元数据（`POST .../metadata/refresh`）以 `force=True` 绕过 gdata 内存缓存重新拉取并覆盖。
 - **校验**：zip 可打开 + 条目数 > 0 + 抽查首页；不符置 `failed`（保留文件备查，可删除重试）。
 - **并发**：`ARCHIVE_DOWNLOAD_CONCURRENCY`（默认 5）个活跃任务（下载/7z 转换）共享信号量，其余排队；归档流量不受阅读限流池约束，但**仍过熔断检查**（banned/exceed 时暂停）。
 - **下载**：`?start=1` 流式写 `.part`（覆盖 6s 默认超时，长读超时 600s）；`stream_archive` 支持 `Range: bytes={offset}-` 断点续传（hath 服务 206）；状态 URL 过期/失败 → 重新 POST 重准备。
@@ -182,7 +185,9 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 | `GET /api/archive` | JSON：归档列表 + 统计（数量/可用/占用/状态分布） |
 | `GET /api/archive/{gid}/{token}/quote` | 归档报价：标题 + GP 余额 + 各档位（dltype/label/价格 Free 或 GP/大小/可用性/已解锁）（**不扣 GP，不发任务**） |
 | `POST /api/archive/{gid}/{token}/start` | 触发归档（body `{"quality": "org"}`，缺省 `ARCHIVE_QUALITY`；`_match_option` 匹配 dltype/标签/别名）并开始后台任务；免费/已解锁档不扣 GP |
-| `GET /api/archive/{gid}/{token}` | 单条状态/进度（含 active、download_url） |
+| `GET /api/archive/{gid}/{token}` | 单条状态/进度（含 active、download_url、metadata_at） |
+| `GET /api/archive/{gid}/{token}/metadata` | 读取本地持久化的 gdata 元数据快照（metadata.json；无快照 404） |
+| `POST /api/archive/{gid}/{token}/metadata/refresh` | 手动刷新元数据：force 拉取 gdata 最新 metadata + 封面并覆盖本地快照（不触发下载、不扣 GP；无 IPB 亦可，gdata/封面均公开） |
 | `DELETE /api/archive/{gid}/{token}` | 删除本地归档（取消任务 + 删文件；账户归档记录保留，可重下） |
 | `POST /api/archive/{gid}/{token}/refresh` | 重新 POST 重准备并重下（免费档不扣 GP） |
 

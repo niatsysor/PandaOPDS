@@ -4,6 +4,8 @@
 - GET    /api/archive/{gid}/{token}/quote      tier list + prices (no GP spent)
 - POST   /api/archive/{gid}/{token}/start      trigger archive (free tiers free)
 - GET    /api/archive/{gid}/{token}            single entry status
+- GET    /api/archive/{gid}/{token}/metadata    persisted gdata snapshot
+- POST   /api/archive/{gid}/{token}/metadata/refresh  force-refetch gdata + cover
 - DELETE /api/archive/{gid}/{token}            delete local archive
 - POST   /api/archive/{gid}/{token}/refresh    re-trigger re-download (no GP)
 
@@ -51,12 +53,29 @@ async def archive_status(request: Request, gid: int, token: str):
     return status
 
 
+@router.get("/api/archive/{gid}/{token}/metadata")
+async def archive_metadata(request: Request, gid: int, token: str):
+    """Return the persisted gdata metadata snapshot (404 when absent)."""
+    snap = await _manager(request).get_metadata_snapshot(gid, token)
+    if snap is None:
+        raise HTTPException(
+            status_code=404, detail="no metadata snapshot for this gallery"
+        )
+    return snap
+
+
 @router.delete("/api/archive/{gid}/{token}")
 async def archive_delete(request: Request, gid: int, token: str):
     removed = await _manager(request).remove(gid, token)
     if not removed:
         raise HTTPException(status_code=404, detail="no archive entry for this gallery")
     return {"removed": True}
+
+
+@router.post("/api/archive/{gid}/{token}/metadata/refresh")
+async def archive_metadata_refresh(request: Request, gid: int, token: str):
+    """Force-refetch gdata metadata + cover and overwrite the snapshot."""
+    return await _manager(request).refresh_metadata(gid, token)
 
 
 @router.post("/api/archive/{gid}/{token}/refresh")

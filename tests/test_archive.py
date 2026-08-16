@@ -144,7 +144,8 @@ from app.archive import manager as manager_mod  # noqa: E402
 from app.archive.manager import ArchiveManager  # noqa: E402
 from app.archive.store import ArchiveStore, ST_FAILED, ST_READY  # noqa: E402
 from app.config import Settings  # noqa: E402
-from app.eh.exceptions import ArchiverUnavailableError  # noqa: E402
+from app.eh.exceptions import ArchiverUnavailableError, EHException  # noqa: E402
+from app.eh.models import GalleryMetadata, GalleryTag  # noqa: E402
 from app.throttle.limiter import Throttle  # noqa: E402
 
 
@@ -439,3 +440,114 @@ async def test_get_image_pse_zero_based_maps_to_archive(tmp_path):
     # PSE page 0 == EH page 1 -> archived
     data, _ = await service.get_image(1, "t", 0)
     assert data == b"ARCHIVE"
+
+
+# --------------------------------------------------------------------------
+# metadata snapshot (gdata + cover) — stub of the EHService surface used by
+# ArchiveManager._snapshot_metadata / refresh_metadata
+# --------------------------------------------------------------------------
+
+
+class FakeMetaService:
+    """Stub of EHService.get_metadata / fetch_cover_bytes."""
+
+    def __init__(self, meta, fail_cover=False):
+        self.meta = meta
+        self.fail_cover = fail_cover
+        self.calls = []  # (gid, token, force)
+
+    async def get_metadata(self, gid, token, *, force=False):
+        self.calls.append((gid, token, force))
+        return self.meta
+
+    async def fetch_cover_bytes(self, url):
+        if self.fail_cover:
+            raise EHException("cover fetch failed")
+        return b"JPEGDATA", "image/jpeg"
+
+
+META = GalleryMetadata(
+    gid=1, token="t", title="Test Gallery Title [Artist]", title_jpn="",
+    category="Doujinshi", thumb="https://ehgt.org/xx/1.jpg", rating=4.5,
+    tags={"female": [GalleryTag("female", "foo")]}, filecount=3, filesize=1000,
+    posted=1700000000, uploader="artist", torrentcount=0, expunged=False,
+)
+
+
+@pytest.mark.asyncio
+async def test_archive_snapshots_metadata_after_ready(tmp_path):
+    settings, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    fake = FakeMetaService(META)
+    manager.service = fake
+
+    await manager.start(1, "t")
+    await wait_done(manager, 1, "t")
+
+    meta = manager.store.get(1, "t")
+    assert meta["status"] == "ready"
+    assert meta["metadata_at"] > 0
+    snap = manager.store.read_metadata_snapshot(1, "t")
+    assert snap["title"] == META.title
+    assert snap["category"] == "Doujinshi"
+    assert snap["tags"]["female"][0]["key"] == "foo"  # full tag structure kept
+    assert snap["cover_mime"] == "image/jpeg"
+    assert manager.store.cover_path(1, "t").read_bytes() == b"JPEGDATA"
+    # the snapshot must never break the archived page path
+    assert await manager.get_page_bytes(1, "t", 1) == b"page-0"
+
+
+@pytest.mark.asyncio
+async def test_archive_snapshot_cover_failure_keeps_ready(tmp_path):
+    settings, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    fake = FakeMetaService(META, fail_cover=True)
+    manager.service = fake
+
+    await manager.start(1, "t")
+    await wait_done(manager, 1, "t")
+
+    meta = manager.store.get(1, "t")
+    assert meta["status"] == "ready"  # cover failure never fails the task
+    assert meta["metadata_at"] > 0  # metadata still snapshotted
+    snap = manager.store.read_metadata_snapshot(1, "t")
+    assert snap["cover_mime"] == ""
+    assert not manager.store.cover_path(1, "t").exists()
+
+
+@pytest.mark.asyncio
+async def test_archive_snapshot_gdata_none_still_ready(tmp_path):
+    settings, client, manager = make_manager(tmp_path)
+    wire_archive(client)
+    manager.service = FakeMetaService(None)
+
+    await manager.start(1, "t")
+    await wait_done(manager, 1, "t")
+
+    meta = manager.store.get(1, "t")
+    assert meta["status"] == "ready"
+    assert meta.get("metadata_at") is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_metadata_force_overwrites_snapshot(tmp_path):
+    settings, client, manager = make_manager(tmp_path)
+    await manager.store.upsert(1, "t", {"title": "T", "status": "ready"})
+    fake = FakeMetaService(META)
+    manager.service = fake
+
+    summary = await manager.refresh_metadata(1, "t")
+    assert summary["filecount"] == 3
+    assert summary["cover_mime"] == "image/jpeg"
+    assert fake.calls[-1] == (1, "t", True)  # force bypasses the memory cache
+    snap = manager.store.read_metadata_snapshot(1, "t")
+    assert snap["saved_at"] > 0
+    assert manager.store.get(1, "t")["metadata_at"] == snap["saved_at"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_metadata_requires_entry(tmp_path):
+    settings, client, manager = make_manager(tmp_path)
+    manager.service = FakeMetaService(META)
+    with pytest.raises(EHException):
+        await manager.refresh_metadata(1, "t")

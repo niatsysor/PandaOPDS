@@ -216,13 +216,27 @@ class EHService:
 
     # -- gdata metadata ----------------------------------------------------
 
-    async def get_metadata(self, gid: int, token: str) -> GalleryMetadata | None:
+    async def get_metadata(
+        self, gid: int, token: str, *, force: bool = False
+    ) -> GalleryMetadata | None:
+        """Single-gallery gdata metadata lookup (memory-cached).
+
+        ``force=True`` bypasses the cache (used by the archive metadata
+        refresh) and re-writes it, so the next cached read sees fresh data.
+        """
         key = self._mem_key("meta", gid, token)
 
         async def _fetch() -> GalleryMetadata | None:
             items = await self._gdata([(gid, token)])
             return items[0] if items else None
 
+        if force:
+            meta = await _fetch()
+            if meta is not None:
+                await self.mem.set(key, meta, self.settings.metadata_ttl_seconds)
+            else:
+                await self.mem.delete(key)
+            return meta
         return await self.mem.get_or_set(key, _fetch, self.settings.metadata_ttl_seconds)
 
     async def get_metadatas(
@@ -418,6 +432,17 @@ class EHService:
         if detail.thumbnails:
             return detail.thumbnails[0].thumb_url
         raise EHException(f"no thumbnail found for gallery {gid}")
+
+    async def fetch_cover_bytes(self, url: str) -> tuple[bytes, str]:
+        """Fetch cover bytes from a CDN URL (e.g. a gdata thumb link).
+
+        Throttled as thumbnail traffic (the ehgt.org CDN pool). Used by the
+        archive metadata snapshot to persist a local cover copy.
+        """
+        data = await self._fetch_image_bytes(
+            url, referer=f"{self.settings.http_origin}/", kind=KIND_THUMB
+        )
+        return data, detect_image_type(data)
 
     async def get_thumb(self, gid: int, token: str) -> tuple[bytes, str]:
         """Proxy the gallery thumbnail, disk-cached under page_no=-1."""

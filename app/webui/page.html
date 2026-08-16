@@ -352,6 +352,14 @@ async function clearDiskCache() {
 /* ---------------- 归档 ---------------- */
 let archiveTimer = null;
 
+function fmtTime(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+    + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
 function archiveBadge(status) {
   const map = {
     ready: ["green", "可用"], downloading: ["blue", "下载中"],
@@ -379,6 +387,7 @@ async function loadArchive() {
     '<div class="stat-grid">'
     + '<div><div class="stat">' + esc(st.entries || 0) + '</div><div class="stat-label">条目</div></div>'
     + '<div><div class="stat">' + esc(st.ready || 0) + '</div><div class="stat-label">可用</div></div>'
+    + '<div><div class="stat">' + esc(st.with_metadata || 0) + '</div><div class="stat-label">已存档元数据</div></div>'
     + '<div><div class="stat">' + esc(fmtBytes(st.bytes)) + '</div><div class="stat-label">占用</div></div>'
     + "</div>"
     + kv("状态分布", esc(statusText)));
@@ -401,16 +410,18 @@ async function loadArchive() {
     + "<td>" + archiveBadge(e.status) + "</td>"
     + '<td class="mono">' + esc(fmtBytes(e.archive_size || e.part_size)) + "</td>"
     + "<td>" + (e.page_count ? esc(e.page_count) : "—") + "</td>"
+    + "<td>" + (e.metadata_at ? fmtTime(e.metadata_at) : '<span class="muted">—</span>') + "</td>"
     + "<td>" + (e.error ? '<div class="err" style="font-size:12px">' + esc(e.error) + "</div>" : "—") + "</td>"
     + "<td>"
-    + `<button class="btn" onclick="refreshArchive(${e.gid},'${e.token}')">刷新</button> `
+    + `<button class="btn" onclick="refreshArchive(${e.gid},'${e.token}')">重下</button> `
+    + `<button class="btn" onclick="refreshMetadata(${e.gid},'${e.token}')">更新元数据</button> `
     + `<button class="btn danger" onclick="deleteArchive(${e.gid},'${e.token}')">删除</button>`
     + "</td>"
     + "</tr>"
   ).join("");
   const listCard = card("归档列表（" + entries.length + "）",
     entries.length
-      ? '<table><thead><tr><th>gid</th><th>token</th><th>标题</th><th>档位</th><th>状态</th><th>大小</th><th>页数</th><th>错误</th><th>操作</th></tr></thead><tbody>'
+      ? '<table><thead><tr><th>gid</th><th>token</th><th>标题</th><th>档位</th><th>状态</th><th>大小</th><th>页数</th><th>元数据</th><th>错误</th><th>操作</th></tr></thead><tbody>'
         + rows + "</tbody></table>"
       : '<span class="muted">暂无归档。输入 gid/token 查询报价后添加。</span>');
 
@@ -500,6 +511,25 @@ async function refreshArchive(gid, token) {
   } catch (e) {
     alert("刷新失败：" + e);
     return;
+  }
+  loadArchive();
+}
+
+async function refreshMetadata(gid, token) {
+  try {
+    const r = await fetch("/api/archive/" + gid + "/" + token + "/metadata/refresh", {
+      method: "POST", headers: { "Accept": "application/json" },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      alert("元数据更新失败：" + (j.detail || j.error || "HTTP " + r.status));
+      return;
+    }
+    alert("元数据已更新：\n" + esc(j.title || "（无标题）")
+      + "\n分类：" + (j.category || "—") + " · 评分：" + (j.rating ?? "—") + " · 页数：" + (j.filecount ?? "—")
+      + (j.cover_mime ? "\n封面：已更新（" + j.cover_mime + "）" : "\n封面：无"));
+  } catch (e) {
+    alert("元数据更新失败：" + e);
   }
   loadArchive();
 }

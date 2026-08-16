@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
         client=service.client,
         throttle=service.throttle,
         store=ArchiveStore(settings.archive_dir),
+        service=service,
     )
     service.attach_archive(archive_manager)
     app.state.archive = archive_manager

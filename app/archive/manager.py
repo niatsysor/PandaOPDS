@@ -20,6 +20,7 @@ import logging
 import os
 import time
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 
 from ..config import Settings
@@ -33,6 +34,7 @@ from ..eh.exceptions import (
 )
 from ..eh.parser import parse_archiver_page
 from ..eh.models import ArchiveOption
+from ..eh.service import EHService
 from ..throttle.limiter import KIND_HTML, Throttle
 from .store import ST_DOWNLOADING, ST_FAILED, ST_PENDING, ST_READY, ST_ZIPPING, ArchiveStore
 
@@ -76,11 +78,16 @@ class ArchiveManager:
         client: EHClient,
         throttle: Throttle,
         store: ArchiveStore,
+        service: EHService | None = None,
     ):
         self.settings = settings
         self.client = client
         self.throttle = throttle
         self.store = store
+        # Optional service layer: when injected, a gdata metadata + cover
+        # snapshot is persisted after each successful archive download (and on
+        # manual refresh). None keeps the manager self-contained (tests).
+        self.service = service
         self._slots = asyncio.Semaphore(settings.archive_download_concurrency)
         self._tasks: dict[str, asyncio.Task] = {}
         self._progress: dict[str, int] = {}
@@ -287,6 +294,86 @@ class ArchiveManager:
         self._progress.pop(key, None)
         return await self.store.remove(gid, token)
 
+    # -- metadata snapshot (gdata + cover, persisted locally) --------------
+
+    async def _snapshot_metadata(
+        self, gid: int, token: str, *, force: bool = False
+    ) -> dict | None:
+        """Fetch gdata metadata + cover and persist them as a local snapshot.
+
+        Runs after a successful archive download (and on manual refresh).
+        Best-effort by design: failures are logged and never fail the archive
+        task — the entry stays ready; a missing snapshot is regenerated on
+        the next manual refresh.
+        """
+        if self.service is None:
+            return None
+        try:
+            meta = await self.service.get_metadata(gid, token, force=force)
+            if meta is None:
+                logger.warning(
+                    "archive metadata snapshot skipped for %s:%s "
+                    "(gdata returned nothing)", gid, token,
+                )
+                return None
+            cover_mime = ""
+            if meta.thumb:
+                try:
+                    data, cover_mime = await self.service.fetch_cover_bytes(meta.thumb)
+                    await self.store.write_cover(gid, token, data)
+                except EHException as exc:
+                    # cover is optional: metadata snapshot is still persisted
+                    logger.warning(
+                        "archive cover snapshot failed for %s:%s (%s); "
+                        "metadata kept", gid, token, exc,
+                    )
+            saved_at = time.time()
+            payload = {
+                **asdict(meta),
+                "gid": gid,
+                "token": token,
+                "saved_at": saved_at,
+                "cover_mime": cover_mime,
+            }
+            await self.store.write_metadata_snapshot(gid, token, payload)
+            await self.store.upsert(gid, token, {"metadata_at": saved_at})
+            return {
+                "gid": gid,
+                "token": token,
+                "title": meta.title,
+                "title_jpn": meta.title_jpn,
+                "category": meta.category,
+                "rating": meta.rating,
+                "filecount": meta.filecount,
+                "filesize": meta.filesize,
+                "posted": meta.posted,
+                "uploader": meta.uploader,
+                "expunged": meta.expunged,
+                "cover_mime": cover_mime or None,
+                "saved_at": saved_at,
+            }
+        except Exception as exc:  # noqa: BLE001 - snapshot must never fail the task
+            logger.warning(
+                "archive metadata snapshot failed for %s:%s (%s)", gid, token, exc
+            )
+            return None
+
+    async def refresh_metadata(self, gid: int, token: str) -> dict:
+        """Force-refetch gdata metadata + cover and overwrite the snapshot."""
+        meta = self.store.get(gid, token)
+        if meta is None:
+            raise EHException(
+                "no archive entry to refresh metadata (start an archive first)"
+            )
+        summary = await self._snapshot_metadata(gid, token, force=True)
+        if summary is None:
+            raise EHException("metadata refresh failed (gdata returned nothing)")
+        return summary
+
+    async def get_metadata_snapshot(self, gid: int, token: str) -> dict | None:
+        """Return the persisted gdata snapshot (None when not archived)."""
+        return self.store.read_metadata_snapshot(gid, token)
+
     def get_status(self, gid: int, token: str) -> dict | None:
         return self._status(gid, token)
 
@@ -352,6 +439,8 @@ class ArchiveManager:
             return  # cancelled / failed / removed meanwhile
         await self._download(gid, token)
         await self._finalize(gid, token)
+        # Best-effort gdata + cover snapshot (never fails the task).
+        await self._snapshot_metadata(gid, token)
 
     async def _wait_ready(self, gid: int, token: str) -> None:
         """Poll the hath.network status URL until the archive is ready."""
