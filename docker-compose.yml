@@ -13,6 +13,10 @@ services:
       # --- site behaviour flags ---
       NW: ${NW:-1}
       DATATAGS: ${DATATAGS:-1}
+      # --- optional HTTP Basic Auth (both set to enable; /health stays public) ---
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_EXEMPT_PATHS: ${AUTH_EXEMPT_PATHS:-}
       # --- URLs ---
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}   # e.g. https://opds.example.com
       # --- caching ---

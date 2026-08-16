@@ -40,7 +40,7 @@ docker compose up -d --build
 - 前端为单 HTML（内联 CSS/JS，无构建链、无 CDN 依赖），消费上述 JSON API；未来功能（离线项目管理、自动化工作流）扩展 API 层即可，页面契约不变。
 - **安全**：`IPB_PASS_HASH` / `IGNEOUS` 永不回传明文（页面与 API 均只显示占位符）。`IPB_MEMBER_ID` 为登录标识，会完整展示。
 - WebUI 不触达 E-Hentai，仅读取内存状态；服务配置异常时页面照常可访问并显示错误详情。
-- 部署注意：默认无独立鉴权，遵循既有约定（docker-compose 绑定 loopback / 反代控制访问）。
+- **可选 Basic Auth**：设置 `AUTH_USERNAME` + `AUTH_PASSWORD` 后，除 `/health`（及 `AUTH_EXEMPT_PATHS` 指定路径）外全部路由需 Basic 凭据，WebUI 同样受保护；未配置时保持默认公开（docker-compose 绑定 loopback / 反代控制访问）。
 
 ## 环境变量
 
@@ -67,6 +67,9 @@ docker compose up -d --build
 | `FACETS` | 内置 10 分类 | OPDS 2.0 分类筛选，格式 `名称:掩码,名称:掩码` |
 | `EH_PROFILE` | `PandaOPDS` | E-Hentai uconfig 独立 profile 名；设空串关闭 |
 | `HOME_CONFIG` | `./config/home.toml` | OPDS 2.0 首页布局配置文件路径 |
+| `AUTH_USERNAME` | 空 | 可选 Basic Auth 用户名；与 `AUTH_PASSWORD` **同时设置**才启用 |
+| `AUTH_PASSWORD` | 空 | 可选 Basic Auth 密码（明文，脱敏显示；仅建议 HTTPS 反代下启用） |
+| `AUTH_EXEMPT_PATHS` | 空 | 逗号分隔的精确路径，认证下仍公开；`/health` 恒豁免 |
 | `LOG_LEVEL` | `INFO` | `INFO` \| `DEBUG`（DEBUG 输出每次出站请求，用于排障） |
 
 完整路由与客户端接入细节见 [AGENTS.md](AGENTS.md)。
@@ -75,6 +78,7 @@ docker compose up -d --build
 
 - 本服务是服务器（多客户端、单 IP 集中请求），比个人客户端更易触发 E-Hentai 封禁。请保持节流参数默认值、善用缓存。
 - 图片限额触发返回 429；IP 被封 / 超限触发全局熔断并返回 503，冷却后自动恢复。
+- **启用 Basic Auth 时必须位于 HTTPS 反代之后**：Basic 凭据仅 base64 编码（非加密），明文传输即泄露。
 - 仅限个人使用，请遵守 E-Hentai 服务条款。
 
 ## 许可证与致谢

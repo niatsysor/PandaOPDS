@@ -29,6 +29,17 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Settings:
+    # --- HTTP Basic Auth (optional, opt-in) ---
+    # The whole app (except exempt paths) requires Basic credentials when
+    # BOTH auth_username and auth_password are set — a one-sided config never
+    # enables auth (never lock the server out). Plain text is fine for private
+    # single-user deployments behind HTTPS; comparison uses a constant-time
+    # hmac.compare_digest. AUTH_EXEMPT_PATHS: comma-separated exact paths that
+    # stay public regardless (e.g. client endpoints that cannot carry headers).
+    auth_username: str = ""
+    auth_password: str = ""
+    auth_exempt_paths: tuple[str, ...] = ()
+
     # --- E-Hentai identity ---
     ipb_member_id: str = ""
     ipb_pass_hash: str = ""
@@ -194,6 +205,16 @@ class Settings:
         """The other site's host (used for 509.gif detection on both sites)."""
         return _SITE_HOSTS[EH_SITE_EHENTAI] if self.is_exhentai else _SITE_HOSTS[EH_SITE_EXHENTAI]
 
+    @property
+    def auth_enabled(self) -> bool:
+        """Basic Auth is active only when BOTH username and password are set.
+
+        A one-sided config (username without password, or vice versa) is
+        treated as disabled — failing open is safer than locking the server
+        out with credentials nobody can supply.
+        """
+        return bool(self.auth_username and self.auth_password)
+
     # --- validation ---
     @property
     def inline_set_key(self) -> str:
@@ -282,6 +303,13 @@ def load_settings() -> Settings:
         return result or defaults
 
     settings = Settings(
+        auth_username=os.getenv("AUTH_USERNAME", "").strip(),
+        auth_password=os.getenv("AUTH_PASSWORD", "").strip(),
+        auth_exempt_paths=tuple(
+            p.strip()
+            for p in os.getenv("AUTH_EXEMPT_PATHS", "").split(",")
+            if p.strip()
+        ),
         ipb_member_id=os.getenv("IPB_MEMBER_ID", "").strip(),
         ipb_pass_hash=os.getenv("IPB_PASS_HASH", "").strip(),
         igneous=os.getenv("IGNEOUS", "").strip(),

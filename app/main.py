@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .auth import auth_request_ok, unauthorized_response
 from .config import ConfigError, load_settings
 from .eh.exceptions import EHException
 from .eh.service import EHService
@@ -52,6 +53,24 @@ async def lifespan(app: FastAPI):
     service = EHService(settings)
     app.state.settings = settings
     app.state.service = service
+
+    if settings.auth_enabled:
+        exempt = ("/health", *settings.auth_exempt_paths)
+        logger.info(
+            "Basic Auth enabled: user=%s, %d exempt path(s)%s",
+            settings.auth_username,
+            len(settings.auth_exempt_paths),
+            " " + ", ".join(exempt) if exempt else "",
+        )
+    elif settings.auth_username or settings.auth_password:
+        # One-sided AUTH_* config: auth stays OFF. Failing open is safer than
+        # locking the server out, but the operator should know the intent was
+        # never honored.
+        logger.warning(
+            "AUTH_USERNAME/AUTH_PASSWORD set on one side only — Basic Auth "
+            "NOT enabled (both must be set)"
+        )
+
     logger.info(
         "PandaOPDS started: site=%s host=%s cache_dir=%s image_cache=%s",
         settings.eh_site,
@@ -74,6 +93,21 @@ app.include_router(opds_router)
 app.include_router(opds2_router)
 app.include_router(stream_router)
 app.include_router(webui_router)
+
+
+@app.middleware("http")
+async def basic_auth_middleware(request: Request, call_next):
+    """Optional HTTP Basic Auth gate for every route.
+
+    Off unless AUTH_USERNAME + AUTH_PASSWORD are both set; /health and any
+    AUTH_EXEMPT_PATHS entry stay public. 401 replies carry the
+    WWW-Authenticate challenge so browsers/OPDS clients prompt for
+    credentials.
+    """
+    if not auth_request_ok(request):
+        logger.info("basic auth rejected: %s %s", request.method, request.url.path)
+        return unauthorized_response()
+    return await call_next(request)
 
 
 @app.get("/health")

@@ -10,8 +10,13 @@ opds.example.com {
 
     encode zstd gzip
 
-    # basic access protection (optional): basic auth or a firewall rule
-    # basic_auth {
-    #     reader $2a$14$...
-    # }
+    # Access control: the app itself ships optional Basic Auth
+    # (AUTH_USERNAME + AUTH_PASSWORD env vars, /health and AUTH_EXEMPT_PATHS
+    # stay public). An extra reverse-proxy layer is optional, e.g.:
+    #
+    #     basic_auth {
+    #         reader $2a$14$...
+    #     }
+    #
+    # The app's 401 carries WWW-Authenticate; Caddy basic_auth is independent.
 }

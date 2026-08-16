@@ -35,3 +35,15 @@ server {
     server_name opds.example.com;
     return 301 https://$host$request_uri;
 }
+
+# Access control: the app itself ships optional Basic Auth
+# (AUTH_USERNAME + AUTH_PASSWORD env vars, /health and AUTH_EXEMPT_PATHS
+# stay public). For an extra layer you may also add nginx basic_auth here:
+#
+#     location / {
+#         ...
+#         auth_basic "PandaOPDS";
+#         auth_basic_user_file /etc/nginx/.htpasswd;
+#     }
+#
+# The app's 401 carries WWW-Authenticate; nginx auth_basic is independent.

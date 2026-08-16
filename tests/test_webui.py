@@ -111,7 +111,7 @@ async def test_config_groups_and_masking(tmp_path):
 
     groups = data["groups"]
     ids = [g["id"] for g in groups]
-    assert ids[:3] == ["identity", "http", "opds"]
+    assert ids[:4] == ["auth", "identity", "http", "opds"]
 
     pass_hash = _find_field(groups, "ipb_pass_hash")
     assert pass_hash["masked"] is True

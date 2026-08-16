@@ -68,6 +68,32 @@ def _field(
 def _settings_groups(s: Settings) -> list[dict]:
     return [
         {
+            "id": "auth",
+            "title": "访问认证（Basic Auth）",
+            "fields": [
+                _field(
+                    "auth_username", "认证用户名",
+                    s.auth_username or "（未设置）",
+                    note="两者都设置才启用；未启用时服务公开可访问",
+                ),
+                _field(
+                    "auth_password", "认证密码",
+                    masked=True, set_=bool(s.auth_password),
+                    note="明文环境变量，脱敏显示；仅建议 HTTPS 反代下启用",
+                ),
+                _field(
+                    "auth_enabled", "认证启用",
+                    "开（全部路由需凭据，/health 除外）" if s.auth_enabled else "关（未配置）",
+                    note="由 AUTH_USERNAME + AUTH_PASSWORD 同时设置推导",
+                ),
+                _field(
+                    "auth_exempt_paths", "豁免路径",
+                    ", ".join(sorted(s.auth_exempt_paths)) if s.auth_exempt_paths else "（无）",
+                    note="AUTH_EXEMPT_PATHS：逗号分隔的精确路径，认证下仍公开；/health 恒豁免",
+                ),
+            ],
+        },
+        {
             "id": "identity",
             "title": "E-Hentai 身份与站点",
             "fields": [
@@ -185,6 +211,8 @@ def _derived(s: Settings) -> dict:
         "ehentai_host": s.ehentai_host,
         "is_exhentai": s.is_exhentai,
         "has_ipb": bool(s.ipb_member_id and s.ipb_pass_hash),
+        "auth_enabled": s.auth_enabled,
+        "auth_exempt_paths": sorted(s.auth_exempt_paths),
     }
 
 
