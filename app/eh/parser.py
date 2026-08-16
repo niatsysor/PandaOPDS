@@ -1,6 +1,5 @@
 """HTML / JSON parsers for E-Hentai pages.
 
-Selector logic mirrors `example/JHenTai/lib/src/utils/eh_spider_parser.dart`.
 Both the old (pre-2024-10-15) and new (datatags=1) detail-page thumbnail
 structures are supported.
 """
@@ -71,7 +70,7 @@ def apply_status_filter(tags: list[GalleryTag], level: str = "balanced") -> list
     keep = _TAG_STATUS_KEEP.get(level, _TAG_STATUS_KEEP["balanced"])
     return [t for t in tags if t.status in keep]
 
-# CSS containers for the four list views (JHenTai `_*GalleryPageDocument2...`)
+# CSS containers for the four list views
 # tr-based selectors are descendant-style: real pages have no <tbody> and lxml
 # does not insert one.
 _LIST_CONTAINERS = [
@@ -94,12 +93,12 @@ _PAGECOUNT_SELECTORS = [
     ".gl4c.glhide > div",              # Compact
     ".gl3e > div",                     # Extended
 ]
-# Index of the "N pages" div within each page-count selector's matches
-# (JHenTai _parse*GalleryPageCount): thumbnail/compact use the 2nd div,
-# extended the 5th (.gl3e children: category/date/rating/uploader/N pages/torrents).
+# Index of the "N pages" div within each page-count selector's matches:
+# thumbnail/compact use the 2nd div, extended the 5th (.gl3e children:
+# category/date/rating/uploader/N pages/torrents).
 _PAGECOUNT_INDEX = {"thumbnail": 1, "compact": 1, "extended": 4}
 
-# Publish-time text selectors per view (JHenTai `publishTime`): the element
+# Publish-time text selectors per view: the element
 # carrying the posted timestamp inside each gallery row. Format on real pages:
 # `2026-08-12 13:11` (site-local wall clock).
 _PUBLISH_SELECTORS = {
@@ -192,8 +191,8 @@ def parse_publish_time_iso(text: str) -> str:
 def _parse_list_rating(row: Any) -> float:
     """Parse the 0-5 star rating from the `.ir` sprite background-position.
 
-    Mirrors JHenTai `_parseGalleryRating`: x offset -16px per star, y offset
-    -21px marks a half star. e.g. ``background-position:-32px -21px`` → 2.5.
+    Rating sprite math: x offset -16px per star, y offset -21px marks a
+    half star. e.g. ``background-position:-32px -21px`` → 2.5.
     """
     style = _attr(_first(row, ".ir"), "style")
     if not style:
@@ -239,15 +238,13 @@ def _parse_list_tags(row: Any, view: str) -> list[GalleryTag]:
     Tag divs carry `title="namespace:key"` and class `gt`/`gtl`/`gtw`; featured
     (voted-up) tags additionally carry an inline style. Layout dependent:
     compact/extended show the full tag set, thumbnail shows only featured tags,
-    minimal shows none. Aligns with JHenTai `_parseCompactGalleryTags` /
-    `_parseExtendedGalleryTags` (verified on the real compact and extended
-    fixtures).
+    minimal shows none (verified on the real compact and extended fixtures).
     """
     if view == "compact":
         divs = _el(row, "div.gt[title], div.gtl[title], div.gtw[title]")
     elif view == "extended":
-        # JHenTai selector minus <tbody> (real pages have none; lxml adds none).
-        # The tag table sits in the 2nd div of .gl4e.glname (1st is .glink);
+        # selector minus <tbody> (real pages have none; lxml adds none). The
+        # tag table sits in the 2nd div of .gl4e.glname (1st is .glink);
         # verified against tests/fixtures/list_page_extended.html.
         divs = _el(
             row,
@@ -330,7 +327,7 @@ def _detail_language_key(raw: str) -> str:
 
 
 def _parse_detail_metadata(doc: Any) -> dict:
-    """Scrape gallery metadata from the detail page (JHenTai-aligned).
+    """Scrape gallery metadata from the detail page.
 
     The detail page already carries everything gdata offers (title, Japanese
     title, category, cover, rating, uploader, publish time, language, file
@@ -399,9 +396,9 @@ def _parse_detail_tags(root: Any) -> list[GalleryTag]:
 def _parse_comment_time(text: str) -> str:
     """Parse the posted-time line into a site-local ``yyyy-MM-dd HH:mm`` string.
 
-    Real pages render ``Posted on 12 August 2026, 13:11 by: user``; output
-    format mirrors JHenTai (DateFormat ``yyyy-MM-dd HH:mm``, site-local wall
-    clock). Returns "" when the format is unrecognised so a malformed comment
+    Real pages render ``Posted on 12 August 2026, 13:11 by: user``; output is
+    site-local wall-clock ``yyyy-MM-dd HH:mm``. Returns "" when the format is
+    unrecognised so a malformed comment
     never breaks the whole detail document.
     """
     m = _COMMENT_POSTED_RE.search(text or "")
@@ -416,7 +413,7 @@ def _parse_comment_time(text: str) -> str:
 
 
 def _parse_detail_comments(root: Any) -> list[GalleryComment]:
-    """Parse the #cdiv comment block (JHenTai ``_parseGalleryDetailsComments``).
+    """Parse the #cdiv comment block.
 
     Structure on real pages (one ``.c1`` per comment):
       <div id="cdiv" class="gm"><a name="c0"></a>
@@ -429,8 +426,8 @@ def _parse_detail_comments(root: Any) -> list[GalleryComment]:
           <div class="c7" id="cvotes_0">...</div>
         </div>...
       </div>
-    Content is preserved as raw HTML (JHenTai keeps the Element; clients
-    render it). A missing #cdiv yields [].
+    Content is preserved as raw HTML (clients render it). A missing #cdiv
+    yields [].
     """
     out: list[GalleryComment] = []
     for el in _el(root, "#cdiv > .c1"):
@@ -455,7 +452,7 @@ def _parse_detail_comments(root: Any) -> list[GalleryComment]:
         content_html = ""
         if c6 is not None:
             # keep the whole .c6 node (with its id attribute) so clients can
-            # render it directly — JHenTai stores the Element itself
+            # render it directly
             content_html = html.tostring(c6, encoding="unicode")
 
         out.append(
@@ -606,8 +603,7 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
 
     def _nav_page() -> int | None:
         """Ranklist/toplist pages use `.ptt` page-number pagination (`?p=`)
-        and have no `#unext` lastGid link. Aligns with JHenTai
-        `_ranklistPageDocument2NextPageIndex`: the next page's existence comes
+        and have no `#unext` lastGid link. The next page's existence comes
         from the last `<td>` of the `.ptt` row (the last page renders the
         disabled "Next ›" arrow as a plain `<td>` without a link).
 

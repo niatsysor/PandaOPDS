@@ -9,7 +9,7 @@ PandaOPDS 是一个 **OPDS-PSE 串流服务器**，作为 E-Hentai.org 的中转
 - 技术栈：**Python + FastAPI + uvicorn**（单进程异步）。
 - 部署：Docker 单机，nginx/caddy 反代，需要 `PUBLIC_BASE_URL` 支持。
 
-**现状**：项目处于调研完成、待实施阶段。`example/JHenTai` 是参考项目（只读，禁止修改），本仓库尚未有实现代码。
+**现状**：主要功能已基本实现，功能随提交持续演进。
 
 ## 项目结构
 
@@ -22,21 +22,8 @@ PandaOPDS/
 ├── deploy/            # nginx/Caddy 反代示例
 ├── Dockerfile / docker-compose.yml
 ├── app/               # 服务端代码
-├── tests/             # 测试
-└── example/
-    └── JHenTai/       # 参考项目（Flutter E-Hentai 客户端），只读，独立 git 仓库
+└── tests/             # 测试
 ```
-
-## 参考代码位置（JHenTai，实施时对照）
-
-| 用途 | 文件 |
-|------|------|
-| 官方 API 调用（gdata） | `example/JHenTai/lib/src/network/eh_request.dart`（`requestGalleryMetadata(s)`） |
-| HTML 解析（全部选择器） | `example/JHenTai/lib/src/utils/eh_spider_parser.dart`（1529 行） |
-| 缩略图解析（新旧结构） | 同上：`_parseGalleryDetailsForNewThumbnails` / `_parseGalleryDetailsForOldSmallThumbnails` / `_parseGalleryDetailsForOldLargeThumbnails` |
-| 图片页解析（#img/509/nl/f_shash） | 同上：`imagePage2GalleryImage` |
-| 列表页解析（四种视图） | 同上：`_parseThumbnailGallery` / `_parseCompactGallery` / `_parseExtendedGallery` / `_parseMinimalGallery` |
-| cookie / 缓存 / 异常检测 | `lib/src/network/eh_cookie_manager.dart`、`eh_cache_manager.dart`、`eh_request.dart` 的 `_emitEHExceptionIfFailed` |
 
 ## 关键技术知识（E-Hentai）
 
@@ -48,9 +35,9 @@ PandaOPDS/
 | `GET https://e-hentai.org/?f_search=...&next={lastGid}` | 列表页（搜索/最新/热门），`next` 参数分页 |
 | `GET https://e-hentai.org/g/{gid}/{token}/?p={n}` | 图库详情页（缩略图每页 20 个，`?p` 翻页） |
 | `GET https://e-hentai.org/s/{imageToken}/{gid}-{pageNo}` | 单图片页（pageNo **1-based**），解析 `#img` src 得真实图片 URL |
-| `https://e-hentai.org/popular` | 热门；`/favorites.php` 收藏；`/toplist.php` 排行榜（`?tl=` 周期：15=昨天/13=近一月/12=近一年/11=全部，`?p=` 翻页；对齐 JHenTai `RanklistType` day/month/year/allTime） |
+| `https://e-hentai.org/popular` | 热门；`/favorites.php` 收藏；`/toplist.php` 排行榜（`?tl=` 周期：15=昨天/13=近一月/12=近一年/11=全部，`?p=` 翻页） |
 
-exhentai.org 对应域名：`exhentai.org`（页面）、`exhentai.org/api.php`（API）。
+exhentai.org 对应域名：`exhentai.org`（页面）、`exhentai.org/api.php`（API）。注意 `/toplist.php` 仅 e-hentai.org 提供（exhentai 无此页面），Toplist 路由因此恒请求 e-hentai.org（service 层硬编码，属预期设计）。
 
 ### 鉴权 Cookie（环境变量注入）
 
@@ -82,7 +69,7 @@ Content-Type: application/json
 
 ### gdata 调用时机（传统爬虫模式，主链路零 ehapi）
 
-浏览阶段（列表/首页/toplist feed）**禁止调用 gdata**：条目完全由列表页 HTML 解析数据渲染（`GalleryListItem`：标题/分类/封面/页数/评分/发布时间/语言/全量标签）。**详情文档同样零 gdata**：v1.2 `/chapters`、v2.0 `/gallery/{gid}/{token}` 直接用详情页 HTML 渲染——详情页本身携带 gdata 等价字段（`#gn`/`#gj`/`#gdd`/`#gdn`/`#grt2`/`#gd5`，对齐 JHenTai `detailPage2GalleryAndDetailAndApikey`），且该页面已由 `/stream` 主链路抓取并缓存 1h。gdata（`get_metadata`/`get_metadatas`）保留在 service 层作兜底与测试用，主链路不再触发：**API 用量为 0**。
+浏览阶段（列表/首页/toplist feed）**禁止调用 gdata**：条目完全由列表页 HTML 解析数据渲染（`GalleryListItem`：标题/分类/封面/页数/评分/发布时间/语言/全量标签）。**详情文档同样零 gdata**：v1.2 `/chapters`、v2.0 `/gallery/{gid}/{token}` 直接用详情页 HTML 渲染——详情页本身携带 gdata 等价字段（`#gn`/`#gj`/`#gdd`/`#gdn`/`#grt2`/`#gd5`），且该页面已由 `/stream` 主链路抓取并缓存 1h。gdata（`get_metadata`/`get_metadatas`）保留在 service 层作兜底与测试用，主链路不再触发：**API 用量为 0**。
 
 缩略图 `/image/{gid}/{token}/thumb` 同样不依赖 gdata：优先命中列表解析时写入的 cover 内存缓存，冷未命中回退详情页第 0 页第一个缩略图（1 次 HTML 请求服务 20 个 `/stream`）。
 
@@ -114,9 +101,9 @@ Content-Type: application/json
 | 403 | Cloudflare | 退避 |
 | 图片 src = 509.gif | 图片限额 | 返回 429 |
 
-PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai 客户端更易触发封禁 → **全局节流 + 缓存命中率是第一优先级**。
+PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比单用户客户端更易触发封禁 → **全局节流 + 缓存命中率是第一优先级**。
 
-### 缓存策略（与 JHenTai 参数一致）
+### 缓存策略
 
 | 层 | 介质 | TTL | 说明 |
 |---|---|---|---|
@@ -161,7 +148,7 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 |------|------|
 | `GET /opds/v2.0` | 根导航文档：`[[group]]` 声明命名组，`[[section]]` 引用组 ID 挂载 publication/navigation 条目；无 group 的 section 独立成组或进入根 navigation；Watched/Favorites 无 IPB cookie 时自动过滤 |
 | `GET /opds/v2.0/search.xml` | OpenSearchDescription（兼容保留，客户端无需依赖；template 指向 v2.0 gallery） |
-| `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`） |
+| `GET /opds/v2.0/gallery?query=&next=` | 采集文档（`application/opds+json;profile=acquisition`）：publications 内嵌完整元数据 + `rel="next"` 分页；`query` 支持浏览维度（空=主页、`watched`、`favorites`、`popular`）；`category` 可选参数按分类筛选（名称映射 `FACETS` 掩码，响应内嵌 Category facets 组） |
 | `GET /opds/v2.0/toplist?period=&page=` | Toplist 采集文档（同上，`page` 分页；内嵌 **OPDS 2.0 period facets**：`facets[0].metadata.title="Period"`，4 条 link 对应 4 周期，当前周期 link 带 `"active": true`） |
 | `GET /opds/v2.0/gallery/{gid}/{token}` | 单 publication 采集文档（完整元数据入口，对应 v1.2 章节 feed；`detail` 模式下为列表 acquisition 落点，`direct` 模式下列表不暴露、Kasane 由 identifier 拼 URL；其 acquisition 恒指向图片流、不指向自身） |
 | `GET /opds/v2.0/gallery/{gid}/{token}/publication` | 单 publication 文档（**顶层 RWPM publication 对象**，非采集文档）：`context`/`metadata`/`links`/`images`/`readingOrder`；每个 publication 的 `rel="self"` 指向此端点，Stump 等客户端跟随 `self` 打开详情并通过内嵌 `readingOrder`（逐页 `/stream/.../page/{n}`）流式阅读 |
@@ -187,7 +174,9 @@ PandaOPDS 是**服务器**（多客户端、单 IP 集中请求），比 JHenTai
 
 - **`groups[]`（OPDS 2.0 标准，§2.5）**：每个 group 包含 `metadata.title`、`links`（`rel="self"`）。可含 `publications[]`（`kind="publication"`）和/或 `navigation[]`（`kind="navigation"`，Komga 风格）。同一 `group` 的 section 合并进一个槽位，publication 与 navigation 可混排。**任何兼容 OPDS 2.0 的客户端均可原生渲染**——无需私货标记。
 - **`navigation[]`**：来自无 `group` 的 `kind="navigation"` 条目。
-- **配置**：`config/home.toml`（**仅 v2.0 消费**）。`[[group]]` 声明组，`[[section]]` 引用 `group` 字段挂载条目。不设文件时使用内置默认布局（publication 预览默认 20 条）。
+- **配置**：`config/home.toml`（**仅 v2.0 消费**）。`[[group]]` 声明组，`[[section]]` 引用 `group` 字段挂载条目。不设文件时使用内置默认布局（内置布局 publication 预览 20 条；TOML 中省略 `count` 的 publication section 默认预览 10 条，显式 `count = 0` 关闭预览）。
+- **分类筛选（facets，v2.0 专属）**：`category` 查询参数按分类过滤搜索结果（名称由 `FACETS` 环境变量定义，`Name:掩码` 逗号分隔，默认 10 个 EH 分类；掩码为 E-Hentai `f_cats` 排除位掩码，如 1021 = 仅 Doujinshi）。gallery 采集文档内嵌 Category facets 组（首条 "All" 清除筛选）。
+- **uconfig profile 隔离**：服务端使用独立 uconfig 配置 profile（`EH_PROFILE`，默认 "PandaOPDS"），隔离服务的列表布局偏好与用户浏览器 profile；列表请求同时恒带 `inline_set=dm_e`（Extended 布局）覆盖——布局固定不可配置（`LIST_LAYOUT` 已移除）。
 
 **OPDS 2.0 搜索（JSON，最终形态）**：导航/采集文档顶层 `rel="search"` link 的 `href` 直接含 `{searchTerms}` 模板（`/opds/v2.0/gallery?query={searchTerms}`，type `application/opds+json;profile=acquisition`）——客户端替换占位符即得搜索结果文档，无需先请求 OpenSearch XML。search 链接同样标 `templated: true`（模板链接统一标记，见「获取模式」）。v1.2 保持 OpenSearch XML（`search.xml`）不变；`/opds/v2.0/search.xml` 仅作兼容保留。
 
@@ -233,9 +222,9 @@ OPDS 2.0 无官方串流扩展，PSE stream 以自定义 rel + `properties.numbe
 - **标准层**：只输出 OPDS/RWPM 标准字段（`title`/`identifier`/`authors`/`language`/`subject`/`numberOfPages`/`modified`/`published`；`description` 预留、当前不输出），通用客户端（对标 Panels）直接消费。`subject` 为拍平标签字符串数组（RWPM/Komga 风格，`ns:key`，不含分类）：详情文档含完整 taglist（经 status 过滤后的全部标签）；列表 feed 是子集（额外剔除 `language`/`artist`——language 已有独立字段，author 由客户端从文件名解析）。
 - **语言码（BCP 47）**：`metadata.language` 输出 RFC 5646（BCP 47）语言码（`chinese`→`zh`、`chinese (simplified)`→`zh-Hans`、`chinese (traditional)`→`zh-Hant`…），由 `app/eh/languages.py` 映射表统一映射（列表/详情/gdata 三路共用）；未知语言与标记伪标签（`translated`/`rewrite`/`raw`）不输出——原始标签文本仍在详情文档 `subject` 中。搜索语法不受影响：`query=language:chinese` 仍用 EH 原生标签名。
 - **标签 status（社区可信度，全局过滤策略）**：EH 标签带 `gt`(confidence)/`gtl`(skepticism)/`gtw`(incorrect) class（列表页与详情页 `#taglist` 同构）。低于 `TAG_STATUS_FILTER` 等级（`balanced` 默认：confidence+skepticism；`strict`：仅 confidence；`off`：全部）的标签从 **subject 与 mytags 一并剔除**——拒绝模棱两可的标签进入目录。status **不传递给客户端**（服务端消费后即丢弃），客户端无法感知被过滤标签的存在。
-- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，Kasane 只读它：`rating`、`uploader`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`、`reviews`。`category` 刻意不进 `subject`（避免与标签混淆）；未来如需对通用客户端暴露分类，走 OPDS 2.0 `facets`（按分类筛选）或 `navigation`（分类浏览入口），勿再塞回 `subject`。
+- **私货层 `metadata.extensions`**：**所有** EH 专属/非标准字段收敛于此单一字段，Kasane 只读它：`rating`、`uploader`、`titleJpn`、`sizeBytes`、`expunged`、`category`、`mytags`、`reviews`。`category` 刻意不进 `subject`（避免与标签混淆）；对通用客户端暴露分类已通过 OPDS 2.0 `facets` 落地（`category` 查询参数 + `FACETS` 掩码，见「首页排版」节），勿再塞回 `subject`。
 - **`extensions.mytags`（列表专属字段，详情不输出）**：仅含**带高亮 style 的标签**（经 status 过滤后），条目 = `namespace`/`key` + `style`（`color`/`borderColor`/`background`，来自列表页 inline style，`!important` 已剥离），**无 status**。语义 = "值得高亮展示的标签"，客户端用它查询高亮样式。详情文档不含 mytags（详情页 `#taglist` 本无高亮 style）——客户端展开详情时**合并**（subject 以详情完整版替换、mytags 保留列表条目继承高亮），勿整体替换重建。
-- **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`mytags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（gdata）。Kasane 必须按字段缺失容忍，完整元数据以详情文档为准（subject 亦以详情完整版为准）。
+- **浏览 vs 详情（字段分级）**：浏览 feed（列表/首页/toplist）零 ehapi，`extensions` 只含列表页可得字段子集（`category`、`rating`、`mytags`）；`titleJpn`/`sizeBytes`/`expunged`/`uploader` 仅详情文档输出（详情页 HTML）。Kasane 必须按字段缺失容忍，完整元数据以详情文档为准（subject 亦以详情完整版为准）。
 - 标签高亮数据来源：列表 feed 的 `mytags` 来自列表页解析的高亮标签（布局固定 extended）；全量标签进 `subject`（列表精简 / 详情完整），二者皆经 `TAG_STATUS_FILTER` 统一过滤，保持子集关系。
 - **`extensions.reviews`（详情专属，v2.0 仅输出；v1.2 纯标准 Atom 不含）**：评论区（详情页 `#cdiv > .c1`，解析器随详情页 HTML 一并提取，零额外上游请求；随 1h 详情页缓存同步过期）。条目 = `id`/`username`/`userId`（可选，无则省略）/`time`/`lastEditTime`（可选）/`content`（**原始 HTML**，含 `.c6` 容器与 id 属性，客户端自行 sanitize 后渲染）。交互状态（fromMe/votedUp/votedDown）与评分详情**不输出**。`COMMENTS_ENABLED=0` 关闭输出（解析仍进行，仅控制序列化）。**链接重写**：`content` 中 E-Hentai 图库链接（`(e-hentai|exhentai).org/(g|mpv)/{gid}/{token}/`，含 `?p=`/锚点）自动重写为 OPDS 2.0 详情链接 `href()`（相对路径 / `PUBLIC_BASE_URL` 绝对）→ `/opds/v2.0/gallery/{gid}/{token}`，锚文本保留原 URL，非图库链接（uploader/forums/外链）原样——app 内点击评论引用图库即可跳转。
 
@@ -327,15 +316,13 @@ curl -H "Accept: application/atom+xml" http://localhost:8000/opds/v1.2
 curl -H "Accept: application/opds+json" http://localhost:8000/opds/v2.0
 curl -H "Accept: application/atom+xml" "http://localhost:8000/opds/v1.2/gallery?query=language:chinese"
 curl -s http://localhost:8000/api/status | head -c 200; echo  # WebUI 状态（根目录挂载）
-curl -o /tmp/p0.jpg "http://localhost:8000/stream/{gid}/{token}/page/0"
+curl -o /tmp/p1.jpg "http://localhost:8000/stream/{gid}/{token}/page/1"
 ```
 
 ## 项目约定
 
 1. **只用 Python**；示例代码（Kotlin/Dart）仅作逻辑参考，不直接搬运语法。
-2. `example/JHenTai` **只读**，禁止修改。
-3. 所有 E-Hentai 出站请求必须经过**统一的数据层 + 限流层**（禁止绕过）。
-4. 限流与缓存为第一优先级；先跑通"列表→元数据→页面URL→图片字节"闭环，再接 OPDS 层。
-5. 新会话先读本文件；初期实施计划已全部完成并归档至 `docs/plans/PLAN-2026-08-11-archived.md`，新需求直接按本文件约定推进。
-6. 出站请求默认超时 6s（JHenTai 同款）、失败重试 3 次（仅网络错误）。
-7. 不要修改 `example/` 下的任何文件。
+2. 所有 E-Hentai 出站请求必须经过**统一的数据层 + 限流层**（禁止绕过）。
+3. 限流与缓存为第一优先级；先跑通"列表→元数据→页面URL→图片字节"闭环，再接 OPDS 层。
+4. 新会话先读本文件；初期实施计划已全部完成并归档至 `docs/plans/PLAN-2026-08-11-archived.md`，新需求直接按本文件约定推进。
+5. 出站请求默认超时 6s、失败重试 3 次（仅网络错误）。

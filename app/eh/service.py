@@ -34,8 +34,7 @@ logger = logging.getLogger(__name__)
 GDATA_BATCH_SIZE = 25
 THUMBS_PER_DETAIL_PAGE = 20
 
-# Ranklist periods -> `?tl=` value (aligned with JHenTai RanklistType:
-# day=15, month=13, year=12, allTime=11).
+# Ranklist periods -> `?tl=` value (day=15, month=13, year=12, allTime=11).
 TOPLIST_TL = {"yesterday": 15, "month": 13, "year": 12, "alltime": 11}
 
 
@@ -179,9 +178,8 @@ class EHService:
         """Ranklist page (toplist.php). Periods map to `?tl=` values; the page
         uses `.ptt` page-number pagination (`?p=`), parsed into `next_page`.
 
-        JHenTai reuses the compact list parser for ranklist rows
-        (`ranklistPage2GalleryPageInfo` -> `_parseCompactGallery`), so
-        `parse_list_page` handles the layout; the rank column is ignored.
+        Ranklist rows share the compact list layout, so `parse_list_page`
+        handles the view; the rank column is ignored.
         """
         tl = TOPLIST_TL.get(period)
         if tl is None:

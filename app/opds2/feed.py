@@ -59,9 +59,9 @@ class Opds2Builder:
         return f"{self.base}{path}" if self.base else path
 
     def upstream_url(self, gid: int, token: str) -> str:
-        """Canonical upstream gallery page (shareable; matches JHenTai
-        ``GalleryUrl.url``). Absolute, driven by EH_SITE — deliberately NOT
-        routed through ``href()`` so PUBLIC_BASE_URL never affects it."""
+        """Canonical upstream gallery page (shareable). Absolute, driven by
+        EH_SITE — deliberately NOT routed through ``href()`` so
+        PUBLIC_BASE_URL never affects it."""
         return f"https://{self.settings.site_host}/g/{gid}/{token}/"
 
     def serialize(self, doc: dict) -> str:

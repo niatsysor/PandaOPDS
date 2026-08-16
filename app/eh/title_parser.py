@@ -1,6 +1,6 @@
 """Parse author names from E-Hentai gallery titles.
 
-EH naming convention (per JHenTai reference):
+EH naming convention:
     [Author] Clean Title [Language] [Digital]
     (Event) [Circle (Artist)] Clean Title
     [Author1, Author2] Clean Title

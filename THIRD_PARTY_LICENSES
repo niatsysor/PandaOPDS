@@ -12,15 +12,12 @@ open-source project:
    The E-Hentai / ExHentai scraping and parsing implementation in this
    repository (app/eh/) is a Python rewrite that follows JHenTai's HTML
    selectors, page-URL conventions, session/cookie handling, uconfig
-   profile management and upstream failure-detection heuristics.  The
-   mapping table between this project and JHenTai's reference files is
-   documented in AGENTS.md ("参考代码位置（JHenTai，实施时对照）").
+   profile management and upstream failure-detection heuristics.
 
    In accordance with Apache License 2.0 §4, this notice preserves the
    above attribution; files derived from JHenTai's implementation are
    identified in the source where applicable.  No part of JHenTai's
-   original source code is redistributed verbatim in this repository
-   (the reference checkout lives under example/, excluded from builds).
+   original source code is redistributed verbatim in this repository.
 
 The full text of the Apache License 2.0, which governs both this project
 and the JHenTai-derived material above, is reproduced in the repository:

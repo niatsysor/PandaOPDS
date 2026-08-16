@@ -60,7 +60,7 @@
 
 **任务**
 - [x] `GET /stream/{gid}/{token}/page/{n}`：默认 1-based 页码（`PSE_PAGE_BASE=0` 可切 0-based）→ 换算 pageNo → 查页面 URL 缓存 → 未命中抓详情页 `?p={(n-1)//20}` → `/s/` 页解析 `#img` src → 抓图片字节 → 磁盘缓存 → 流式返回 `image/jpeg`
-- [x] 图片加载失败重试：`?nl={reloadKey}` 备份 URL（复用 mihon 插件/JHenTai reloadKey 机制）
+- [x] 图片加载失败重试：`?nl={reloadKey}` 备份 URL（复用 mihon 插件的 reloadKey 机制）
 - [x] `GET /image/{gid}/{token}/thumb`：缩略图代理（代理转发 + 磁盘缓存，非 302）（详情页解析的缩略图 URL，或 302 到 ehgt.org CDN）
 - [x] 超时/取消：客户端断开时取消出站请求；`Cache-Control` 头适当设置
 

@@ -1,7 +1,4 @@
 """Typed models for E-Hentai entities.
-
-Field names mirror the JHenTai reference (`example/JHenTai`) so the mapping
-between the reference and this implementation stays obvious.
 """
 
 from __future__ import annotations
@@ -131,7 +128,7 @@ class GalleryMetadata:
 
     @property
     def size_human(self) -> str:
-        """Human-readable file size (JHenTai byte2String): B/KB/MB/GB."""
+        """Human-readable file size: B/KB/MB/GB."""
         size = float(self.filesize)
         if size < 1024:
             return f"{int(size)}B"
@@ -149,16 +146,15 @@ class GalleryMetadata:
 class GalleryComment:
     """One gallery comment parsed from the detail page's `#cdiv` block.
 
-    Field names mirror the JHenTai reference (`GalleryComment`); only the
-    display-relevant subset is kept — interactive flags (fromMe/votedUp/
-    votedDown) and score details are deliberately dropped (MVP). Content is
-    preserved as raw HTML (JHenTai keeps the Element; clients render it).
+    Only the display-relevant subset is kept — interactive flags (fromMe/
+    votedUp/votedDown) and score details are deliberately dropped (MVP).
+    Content is preserved as raw HTML (clients render it).
     """
 
     id: int
     username: str
     user_id: int | None = None  # from the forums showuser= link
-    time: str = ""  # site-local "yyyy-MM-dd HH:mm" (JHenTai-aligned)
+    time: str = ""  # site-local "yyyy-MM-dd HH:mm"
     last_edit_time: str = ""  # from .c8 > strong (empty when unedited)
     content_html: str = ""  # raw HTML of .c6 (client renders)
 
@@ -217,7 +213,7 @@ class DetailPageInfo:
     thumbnails: list[GalleryThumbnail] = field(default_factory=list)
     # Full tag list from the #taglist block (all tags, with status + style).
     tags: list[GalleryTag] = field(default_factory=list)
-    # --- metadata scraped from the same page (JHenTai detailPage2Gallery...) ---
+    # --- metadata scraped from the same page ---
     title: str = ""          # #gn
     title_jpn: str = ""      # #gj (empty when no Japanese title)
     category: str = ""       # #gdc > .cs

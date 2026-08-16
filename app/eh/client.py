@@ -107,15 +107,14 @@ class EHClient:
         Strategy (covers all three edge cases):
 
         1. **Doesn't exist yet** → POST ``profile_action=create`` to create
-           and switch in one step (JHenTai-aligned).
+           and switch in one step.
         2. **Already exists** → parse the uconfig page for the existing
            profile's numeric ID, then POST ``profile_set=<id>`` to switch.
         3. **Slots full / creation rejected** → fall back silently; the
            per-request ``inline_set`` override is always active regardless.
 
         Profile IDs and names are read from ``#profile_form > select > option``
-        elements on the uconfig page (mirrors JHenTai's
-        ``settingPage2SiteSetting`` parser).
+        elements on the uconfig page.
         """
         import re
 
@@ -165,7 +164,7 @@ class EHClient:
                 form_data={
                     "profile_action": "create",
                     "profile_name": profile_name,
-                    "profile_set": "616",  # JHenTai-aligned: switch after create
+                    "profile_set": "616",  # switch after create
                 },
                 referer=f"{self.settings.http_origin}/uconfig.php",
             )

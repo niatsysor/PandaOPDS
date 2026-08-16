@@ -1,7 +1,6 @@
 """Parser unit tests using mock HTML fixtures (no network, no cookies).
 
-Fixture structures mirror the real E-Hentai markup documented in
-example/JHenTai/lib/src/utils/eh_spider_parser.dart.
+Fixture structures mirror the real E-Hentai markup.
 """
 
 import pytest
@@ -454,7 +453,7 @@ def test_parse_list_page_extended_extra_fields():
 
 
 def test_parse_list_page_compact_rating_and_publish_time():
-    """Compact rows also expose rating/publish time (mirrors JHenTai)."""
+    """Compact rows also expose rating/publish time."""
     html = """
     <html><body>
     <table class="itg gltc"><tbody>
@@ -637,7 +636,7 @@ def test_parse_detail_comments():
     assert c0.user_id == 685825
     assert c0.time == "2026-08-12 13:11"
     assert c0.last_edit_time == ""
-    # raw HTML preserved (JHenTai keeps the Element)
+    # raw HTML preserved
     assert 'id="comment_0"' in c0.content_html
     assert "尝试用BallonsTranslator翻译+修图" in c0.content_html
     assert 'href="https://e-hentai.org/g/867387/3a0d9903d3/"' in c0.content_html

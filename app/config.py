@@ -54,7 +54,7 @@ class Settings:
     datatags: str = "1"    # enable new thumbnail structure (data-orghash)
 
     # --- HTTP ---
-    timeout_seconds: float = 6.0      # JHenTai-style default timeout
+    timeout_seconds: float = 6.0      # default outbound timeout (6s)
     retries: int = 3                  # network-error retries
     html_interval_seconds: float = 0.3  # min delay between HTML page requests
     # HTML/API share one pool (EH API: 4-5 safe; HTML is the ban-risk traffic

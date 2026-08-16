@@ -135,8 +135,8 @@ def _mytags_payload(t: GalleryTag) -> dict:
 def _comment_payload(c: GalleryComment, href: Callable[[str], str] | None = None) -> dict:
     """extensions.reviews entry: display-relevant subset only.
 
-    Mirrors the JHenTai GalleryComment fields that matter for display:
-    id/username/userId/time/lastEditTime/content (raw HTML). Interactive
+    Display-relevant fields: id/username/userId/time/lastEditTime/content
+    (raw HTML). Interactive
     flags (fromMe/votedUp/votedDown) and score details are deliberately
     omitted (MVP); empty optional fields are dropped. When ``href`` is given
     (the feed's href() helper), gallery links inside the content are rewritten
