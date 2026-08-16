@@ -1,6 +1,8 @@
 [project]
 name = "pandaopds"
-version = "0.1.0"
+# Single source of truth for the app version lives in app/__init__.py
+# (__version__); keep this in sync (tests/test_version.py asserts it).
+version = "0.2.0"
 description = "OPDS-PSE streaming server proxying E-Hentai.org"
 requires-python = ">=3.11"
 classifiers = [

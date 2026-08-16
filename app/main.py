@@ -24,6 +24,7 @@ from .opds2.router import router as opds2_router
 from .stream.router import router as stream_router
 from .throttle.limiter import CircuitOpenError
 from .webui.router import router as webui_router
+from . import __version__
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -100,7 +101,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PandaOPDS",
     description="OPDS-PSE streaming server proxying E-Hentai.org",
-    version="0.1.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
