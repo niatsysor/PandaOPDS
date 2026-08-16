@@ -149,6 +149,32 @@ class DiskImageCache:
             logger.info("evicting cache entry %s (%.1f MB)", oldest_key, size / 1024 / 1024)
             self._remove_entry(oldest_key, path, size)
 
+    async def clear(self) -> int:
+        """Delete every cached file and reset the index.
+
+        Returns the number of entries removed. Used by the WebUI to purge
+        stale bytes after a proxy/cover fix (entries otherwise live up to the
+        7-day TTL). Memory caches are unaffected — they hold URLs, not bytes.
+        """
+        if not self.enabled:
+            return 0
+        async with self._lock:
+            n = len(self._entries)
+            for key, (path, _, _) in list(self._entries.items()):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                # prune now-empty shard dirs (harmless if non-empty)
+                try:
+                    Path(path).parent.rmdir()
+                except OSError:
+                    pass
+            self._entries.clear()
+            self._total_bytes = 0
+            logger.info("disk cache cleared: %d entries removed", n)
+            return n
+
     @property
     def stats(self) -> dict:
         return {

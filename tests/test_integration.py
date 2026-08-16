@@ -116,6 +116,11 @@ async def test_parser_on_real_fixtures():
     assert detail.comments[0].username == "gvc051126"
     assert detail.comments[0].time == "2026-08-12 13:11"
     assert "<a " in detail.comments[0].content_html
+    # cover regression (datatags=1): the #gdt block is one sprite strip, so
+    # the real cover must come from #gd1 — never from thumbnails[0].
+    assert detail.cover_url.startswith("https://ehgt.org/")
+    assert detail.cover_url != detail.thumbnails[0].thumb_url
+    assert len({t.thumb_url for t in detail.thumbnails}) == 1  # sprite strip
 
     img = parse_image_page((FIXTURE_DIR / "image_page.html").read_text(encoding="utf-8"))
     assert not img.is_509 and img.image_url.startswith("http")

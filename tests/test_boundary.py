@@ -294,3 +294,61 @@ async def test_nl_retry_skipped_for_hard_failures(tmp_path):
         await svc.get_image(1, "tok", 1)
     assert svc.client.image_calls == 1  # no nl retry for banned
     await svc.close()
+
+
+# --------------------------------------------------------------------------
+# thumbnail/cover resolution (datatags=1 sprite regression)
+# --------------------------------------------------------------------------
+
+class _FakeClientCover(_FakeClient):
+    """Detail page carries a real #gd1 cover (new datatags=1 structure)."""
+
+    async def get_html(self, path, params=None, referer=None):
+        if path.startswith("/g/"):
+            return _detail_html_s(2).replace(
+                '<div id="gdt" class="gdt">',
+                '<div id="gd1"><div style="width:250px;height:188px;'
+                'background:transparent url(https://ehgt.org/w/aa/bb-cover.webp) 0 0 no-repeat'
+                '"></div></div><div id="gdt" class="gdt">',
+            )
+        return await super().get_html(path, params, referer)
+
+
+@pytest.mark.asyncio
+async def test_get_thumb_prefers_detail_cover_over_sprite(tmp_path):
+    """Cold cover miss must use #gd1 (real cover), never the #gdt sprite strip."""
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClientCover())
+    url = await svc.get_thumb_url(1, "tok")
+    assert url == "https://ehgt.org/w/aa/bb-cover.webp"
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_get_thumb_falls_back_to_thumbnail_when_no_cover(tmp_path):
+    """No #gd1 on the page -> last-resort thumbnails[0] (old structures)."""
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClient())
+    url = await svc.get_thumb_url(1, "tok")
+    assert url == "https://ehgt.org/t/0.jpg"
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_get_thumb_uses_cover_memory_cache(tmp_path):
+    """List-page cover cache is preferred: zero upstream for the thumb."""
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClient())
+    await svc.mem.set("cover:1:tok", "https://ehgt.org/w/list-cover.jpg", 3600)
+    url = await svc.get_thumb_url(1, "tok")
+    assert url == "https://ehgt.org/w/list-cover.jpg"
+    assert svc.client.calls == []  # no detail-page fetch
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_get_detail_page_records_cover(tmp_path):
+    """Detail-page parse seeds the cover memory cache (so a later thumb
+    request hits the cache instead of re-fetching the detail page)."""
+    svc = EHService(_settings(cache_dir=str(tmp_path)), client=_FakeClientCover())
+    detail = await svc.get_detail_page(1, "tok", 0)
+    assert detail.cover_url == "https://ehgt.org/w/aa/bb-cover.webp"
+    assert await svc.mem.get("cover:1:tok") == "https://ehgt.org/w/aa/bb-cover.webp"
+    await svc.close()

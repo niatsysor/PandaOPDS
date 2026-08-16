@@ -326,7 +326,7 @@ def _detail_language_key(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def _parse_detail_metadata(doc: Any) -> dict:
+def _parse_detail_metadata(doc: Any, site_host: str) -> dict:
     """Scrape gallery metadata from the detail page.
 
     The detail page already carries everything gdata offers (title, Japanese
@@ -340,6 +340,8 @@ def _parse_detail_metadata(doc: Any) -> dict:
     m = _URL_RE.search(cover_style)
     if m:
         cover_url = m.group(1)
+        if cover_url.startswith("/"):
+            cover_url = f"https://{site_host}{cover_url}"
     language = _detail_language_key(gdd.get("Language", ""))
     language = map_language(language) or ""
     return {
@@ -789,7 +791,7 @@ def parse_detail_page(html_text: str, site_host: str, page_index: int = 0) -> De
     if cur is not None and _text(cur).isdigit():
         current_page_no = int(_text(cur))
 
-    meta = _parse_detail_metadata(doc)
+    meta = _parse_detail_metadata(doc, site_host)
     return DetailPageInfo(
         image_no_from=image_no_from,
         image_no_to=image_no_to,

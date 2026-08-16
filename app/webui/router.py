@@ -323,6 +323,20 @@ async def api_home(request: Request):
     }
 
 
+@router.post("/api/cache/clear")
+async def api_cache_clear(request: Request):
+    """Purge the on-disk image cache.
+
+    Disk entries live up to 7 days, so stale bytes (e.g. thumbnails cached
+    before a cover-proxy fix) need an explicit clear. Memory caches are left
+    untouched — they hold URLs/metadata and expire within minutes/hours.
+    Route is covered by Basic Auth when enabled (same as the rest of WebUI).
+    """
+    service: EHService = request.app.state.service
+    removed = await service.disk.clear()
+    return {"cleared": removed, "enabled": service.disk.enabled}
+
+
 @router.get("/")
 async def webui_page():
     return HTMLResponse(_PAGE.read_text(encoding="utf-8"))

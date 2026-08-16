@@ -279,7 +279,20 @@ class EHService:
             html_text = await self._html_get(
                 f"/g/{gid}/{token}/", params={"p": str(page_index)}
             )
-            return parse_detail_page(html_text, self.site_host, page_index)
+            info = parse_detail_page(html_text, self.site_host, page_index)
+            # Remember the real cover (#gd1) so thumbnail proxies hit the
+            # memory cache even when the gallery was never seen on a list
+            # page (TTL matches the detail-page cache itself). The upstream
+            # #gdt block is a sprite strip in the new structure, so the
+            # detail-page cover must be recorded here, not derived from
+            # thumbnails.
+            if info.cover_url:
+                await self.mem.set(
+                    self._mem_key("cover", gid, token),
+                    info.cover_url,
+                    self.settings.page_url_ttl_seconds,
+                )
+            return info
 
         return await self.mem.get_or_set(
             key, _fetch, self.settings.page_url_ttl_seconds
@@ -375,14 +388,19 @@ class EHService:
         """Return the thumbnail URL (for a 302 redirect from /image/...).
 
         Browsing must not touch the gdata API: the cover URL recorded by the
-        last list-page parse is preferred; a cold miss falls back to the first
-        thumbnail of the cached detail page (1 HTML request serves 20 /stream
-        requests).
+        last list-page parse is preferred; a cold miss falls back to the real
+        cover scraped from the detail page (#gd1), then to the first #gdt
+        thumbnail as a last resort. The #gdt order matters: in the new
+        (datatags=1) structure every thumbnail shares one sprite strip URL, so
+        using thumbnails[0] as the cover shows an interior-page strip at tiny
+        resolution (1 HTML request still serves 20 /stream requests).
         """
         cached = await self.mem.get(self._mem_key("cover", gid, token))
         if cached:
             return cached
         detail = await self.get_detail_page(gid, token, 0)
+        if detail.cover_url:
+            return detail.cover_url
         if detail.thumbnails:
             return detail.thumbnails[0].thumb_url
         raise EHException(f"no thumbnail found for gallery {gid}")

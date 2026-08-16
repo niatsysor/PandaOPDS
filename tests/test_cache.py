@@ -102,3 +102,26 @@ async def test_disk_cache_disabled(tmp_path):
     cache = DiskImageCache(tmp_path, enabled=False)
     await cache.put(1, "tok", 1, b"data")  # no-op
     assert await cache.get(1, "tok", 1) is None
+
+
+@pytest.mark.asyncio
+async def test_disk_cache_clear(tmp_path):
+    cache = DiskImageCache(tmp_path, max_gb=1.0, ttl_seconds=3600)
+    await cache.put(1, "tok", 1, b"aaa")
+    await cache.put(2, "tok", 2, b"bbb")
+    await cache.put(1, "tok", -1, b"cover")
+    assert cache.stats["entries"] == 3
+
+    n = await cache.clear()
+    assert n == 3
+    assert cache.stats["entries"] == 0
+    assert cache.stats["bytes"] == 0
+    assert await cache.get(1, "tok", 1) is None
+    # files are gone from disk too
+    assert list(tmp_path.rglob("*")) == []
+
+
+@pytest.mark.asyncio
+async def test_disk_cache_clear_disabled(tmp_path):
+    cache = DiskImageCache(tmp_path, enabled=False)
+    assert await cache.clear() == 0

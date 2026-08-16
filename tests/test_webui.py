@@ -251,3 +251,36 @@ async def test_home_surfaces_parse_error(tmp_path):
     assert data["using_file"] is False
     assert data["error"]  # parse error surfaced to the page
     assert data["sections"]  # fallback layout still usable
+
+
+# --------------------------------------------------------------------------
+# /api/cache/clear
+# --------------------------------------------------------------------------
+
+async def _post(path: str):
+    from app.main import app
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post(path)
+
+
+@pytest.mark.asyncio
+async def test_cache_clear_endpoint(tmp_path):
+    """POST /api/cache/clear purges the disk image cache (returns count)."""
+    s = _settings(cache_dir=tmp_path)
+    service = EHService(s)
+    _install_app_state(s, service)
+    await service.disk.put(1, "tok", 1, b"page-bytes")
+    await service.disk.put(1, "tok", -1, b"cover-bytes")
+    assert service.disk.stats["entries"] == 2
+
+    resp = await _post("/api/cache/clear")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cleared"] == 2
+    assert data["enabled"] is True
+    assert service.disk.stats["entries"] == 0
+    assert service.disk.stats["bytes"] == 0
+    assert await service.disk.get(1, "tok", 1) is None
+    await service.close()
