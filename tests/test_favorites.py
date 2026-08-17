@@ -263,8 +263,10 @@ class FakeScanService:
 
     def __init__(self, result):
         self.result = result
+        self.scan_calls = 0
 
     async def scan_favorites(self, known, **kw):
+        self.scan_calls += 1
         return self.result
 
 
@@ -393,6 +395,35 @@ async def test_sync_run_serialized(tmp_path):
     assert syncer.state.known() == {"100:aaa"}
 
 
+@pytest.mark.asyncio
+async def test_request_run_coalesces_burst(tmp_path):
+    """A burst of write-op triggers schedules at most ONE background scan."""
+    syncer = make_syncer(tmp_path)
+    syncer.REQUEST_DEBOUNCE_SECONDS = 0.05
+    syncer.service.result = _new_result([_item(100, "aaa")])
+    syncer.request_run()
+    syncer.request_run()
+    syncer.request_run()
+    await asyncio.sleep(0.3)  # let the debounced scan fire
+    assert syncer.service.scan_calls == 1
+    assert syncer.state.known() == {"100:aaa"}
+
+
+@pytest.mark.asyncio
+async def test_run_without_ipb_skips_quietly(tmp_path):
+    settings = _settings(
+        cache_dir=tmp_path,
+        favorites_sync_state=str(tmp_path / "s.json"),
+        ipb_member_id="",
+        ipb_pass_hash="",
+    )
+    syncer = FavoritesSyncer(settings, service=FakeScanService(_new_result([])))
+    out = await syncer.run()
+    assert out["ok"] is False
+    assert out["skipped"] is True
+    assert syncer.service.scan_calls == 0
+
+
 # --------------------------------------------------------------------------
 # routes
 # --------------------------------------------------------------------------
@@ -427,6 +458,47 @@ async def test_route_add_single(tmp_path):
     assert body["ok"] is True
     assert body["ok_count"] == 1
     assert client.calls == [("add", 100, "aaa", 1, "n")]
+
+
+@pytest.mark.asyncio
+async def test_route_add_schedules_background_sync(tmp_path):
+    """A successful write op triggers one debounced background scan."""
+    settings, client, service = make_service(tmp_path)
+    syncer = make_syncer(tmp_path)
+    syncer.REQUEST_DEBOUNCE_SECONDS = 0.05
+    syncer.service.result = _new_result([_item(100, "aaa")])
+    _install_app_state(settings, service, syncer=syncer)
+    resp = await _post("/api/favorites", {
+        "action": "add", "gid": 100, "token": "aaa", "favcat": 1
+    })
+    assert resp.status_code == 200
+    await asyncio.sleep(0.3)  # let the debounced scan fire
+    assert syncer.service.scan_calls == 1
+    assert syncer.state.known() == {"100:aaa"}
+
+
+@pytest.mark.asyncio
+async def test_route_add_no_sync_when_failed(tmp_path):
+    """A fully failed batch must NOT trigger a background scan."""
+    settings, client, service = make_service(tmp_path)
+    syncer = make_syncer(tmp_path)
+    syncer.REQUEST_DEBOUNCE_SECONDS = 0.05
+    syncer.service.result = _new_result([])
+    _install_app_state(settings, service, syncer=syncer)
+
+    from app.eh.exceptions import EHException
+
+    async def boom(action, items, favcat=None, note=""):
+        # force an upstream failure (mapped to 502 by the global handler)
+        raise EHException("upstream down")
+
+    service.favorite_action = boom
+    resp = await _post("/api/favorites", {
+        "action": "add", "gid": 100, "token": "aaa", "favcat": 1
+    })
+    assert resp.status_code == 502
+    await asyncio.sleep(0.2)
+    assert syncer.service.scan_calls == 0
 
 
 @pytest.mark.asyncio

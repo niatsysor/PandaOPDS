@@ -51,9 +51,13 @@ class FavoritesSyncer:
         self.archive = archive
         self.state = state or FavoritesSyncState(settings.favorites_sync_state)
         self._task: asyncio.Task | None = None
+        self._trigger_task: asyncio.Task | None = None
+        self._requested_run = False
         self._lock = asyncio.Lock()
         self._busy = False
         self._last_error: str | None = None
+        # Debounce window for post-write sync triggers (coalesces bursts).
+        self.REQUEST_DEBOUNCE_SECONDS = 3.0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -63,13 +67,22 @@ class FavoritesSyncer:
             return
         if self.settings.favorites_sync_interval_seconds <= 0:
             logger.info(
-                "favorites sync disabled (FAVORITES_SYNC_INTERVAL_SECONDS=0); "
-                "manual runs still available via POST /api/favorites/sync/run"
+                "favorites sync periodic loop disabled "
+                "(FAVORITES_SYNC_INTERVAL_SECONDS=0); post-write triggers and "
+                "manual POST /api/favorites/sync/run still work"
             )
             return
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
+        if self._trigger_task is not None:
+            self._trigger_task.cancel()
+            try:
+                await self._trigger_task
+            except asyncio.CancelledError:
+                pass
+            self._trigger_task = None
+        self._requested_run = False
         if self._task is None:
             return
         self._task.cancel()
@@ -93,6 +106,30 @@ class FavoritesSyncer:
 
     # -- public API --------------------------------------------------------
 
+    def request_run(self) -> None:
+        """Queue ONE background sync after a manual favorites write op.
+
+        Debounced + coalesced: a burst of write ops (e.g. a 200-item batch)
+        schedules at most a single extra scan, started a few seconds after the
+        first trigger. Any in-flight/periodic run is serialized by ``run``'s
+        lock, and the debounce window makes the scan see the just-committed
+        favorite. Safe to call even when the periodic loop is disabled (the
+        one-shot scan still runs)."""
+        if self._requested_run or (self._trigger_task is not None and not self._trigger_task.done()):
+            return
+        self._requested_run = True
+        self._trigger_task = asyncio.create_task(self._debounced_run())
+
+    async def _debounced_run(self) -> None:
+        await asyncio.sleep(self.REQUEST_DEBOUNCE_SECONDS)
+        self._requested_run = False
+        try:
+            await self.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the index is best-effort
+            logger.warning("favorites post-write sync failed (%s)", exc)
+
     async def run(self) -> dict:
         """Run one incremental scan + (optionally) auto-archive new items.
 
@@ -108,6 +145,18 @@ class FavoritesSyncer:
                 self._busy = False
 
     async def _run_once(self) -> dict:
+        # Favorites are account-scoped: without IPB cookies there is nothing
+        # to scan — fail fast and quietly so non-logged-in deployments don't
+        # log hourly sadpanda warnings.
+        if not (self.settings.ipb_member_id and self.settings.ipb_pass_hash):
+            return {
+                **self.status(),
+                "ok": False,
+                "baseline": False,
+                "error": "favorites require IPB cookies (IPB_MEMBER_ID + IPB_PASS_HASH)",
+                "skipped": True,
+            }
+
         is_baseline = not self.state.baseline_established()
         try:
             result = await self.service.scan_favorites(

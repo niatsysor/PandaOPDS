@@ -240,7 +240,7 @@ def _settings_groups(s: Settings) -> list[dict]:
                 ),
                 _field(
                     "favorites_sync_interval_seconds", "同步周期（秒）", s.favorites_sync_interval_seconds,
-                    note="0 = 关闭周期扫描；手动 POST /api/favorites/sync/run 始终可用",
+                    note="默认 3600=每小时；0 = 关闭周期扫描（写操作后的防抖触发 + 手动 sync/run 仍生效）",
                 ),
                 _field(
                     "favorites_sync_archive", "自动归档新增项",

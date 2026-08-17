@@ -118,6 +118,12 @@ async def favorites_action(request: Request, payload: dict):
     results = await _service(request).favorite_action(
         action, items, favcat=favcat, note=note
     )
+    # any successful write → schedule one (debounced, coalesced) background
+    # scan so the favorites index / auto-archive catches up immediately
+    # instead of waiting for the next periodic tick.
+    syncer = _syncer(request)
+    if syncer is not None and any(r["ok"] for r in results):
+        syncer.request_run()
     return {
         "action": action,
         "ok": all(r["ok"] for r in results),

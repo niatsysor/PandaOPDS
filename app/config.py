@@ -139,24 +139,25 @@ class Settings:
     eh_profile: str = "PandaOPDS"
 
     # --- Favorites operations & sync ---
-    # Favorites write operations (add/move/remove via gallerypopups.php)
-    # require IPB cookies (derived, no separate switch); the API returns 403
-    # without them, matching the archive gate.
+    # Favorites write ops (add/move/remove via gallerypopups.php) require IPB
+    # cookies (derived from ipb_member_id+ipb_pass_hash, same as the archiver);
+    # the API returns 403 without them.
     #
-    # Periodic favorites sync (background task):
-    #   favorites_sync_interval_seconds  interval in seconds; 0 = disabled.
-    #   favorites_sync_archive           when true, newly discovered scoped
-    #                                    favorites are auto-archived (GP cost!)
-    #                                    — must be explicitly enabled by the
-    #                                    operator, default off.
-    #   favorites_sync_categories        favcat ID whitelist (comma-separated);
-    #                                    empty = scan all categories.
-    #   favorites_sync_state             JSON file persisting the scanned-gid
-    #                                    snapshot (known/archived/errors).
+    # Favorites sync (periodic background scan + optional auto-archive):
+    #   favorites_sync_interval_seconds  interval between scans (default 3600 =
+    #                                    1h; 0 disables the periodic loop). The
+    #                                    incremental stop keeps each scan to
+    #                                    ~1-3 pages, so hourly is cheap. A
+    #                                    manual write op always triggers one
+    #                                    extra debounced background scan.
+    #   favorites_sync_archive           auto-archive newly discovered items
+    #                                    (GP cost! must be enabled manually)
+    #   favorites_sync_categories        favcat ID whitelist (() = scan all)
+    #   favorites_sync_state             JSON file persisting scanned gids
     #   favorites_sync_match_threshold   consecutive known gids that stop an
-    #                                    incremental scan.
-    #   favorites_sync_max_pages         hard page cap per scan (safety).
-    favorites_sync_interval_seconds: float = 0.0
+    #                                    incremental scan
+    #   favorites_sync_max_pages         hard cap on pages scanned per run
+    favorites_sync_interval_seconds: float = 3600.0
     favorites_sync_archive: bool = False
     favorites_sync_categories: tuple[int, ...] = ()
     favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
@@ -178,46 +179,6 @@ class Settings:
     archive_dir: Path = field(default_factory=lambda: Path("./archives"))
     archive_quality: str = "original"
     archive_download_concurrency: int = 5
-
-    # --- Favorites operations & sync ---
-    # Favorites write ops (add/move/remove via gallerypopups.php) require IPB
-    # cookies (derived from ipb_member_id+ipb_pass_hash, same as the archiver).
-    #
-    # Favorites sync (periodic background scan + optional auto-archive):
-    #   favorites_sync_interval_seconds  interval between scans (0 = disabled)
-    #   favorites_sync_archive           auto-archive newly discovered items
-    #                                    (GP cost! must be enabled manually)
-    #   favorites_sync_categories        favcat ID whitelist (() = scan all)
-    #   favorites_sync_state             JSON file persisting scanned gids
-    #   favorites_sync_match_threshold   consecutive known gids that stop an
-    #                                    incremental scan
-    #   favorites_sync_max_pages         hard cap on pages scanned per run
-    favorites_sync_interval_seconds: float = 0.0
-    favorites_sync_archive: bool = False
-    favorites_sync_categories: tuple[int, ...] = ()
-    favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
-    favorites_sync_match_threshold: int = 5
-    favorites_sync_max_pages: int = 50
-
-    # --- Favorites operations & sync ---
-    # Favorites write ops (add/move/remove via gallerypopups.php) require
-    # IPB cookies (derived, no switch; 403 without).
-    #
-    # Favorites sync (periodic background scan):
-    #   favorites_sync_interval_seconds  interval between scans (0 = disabled)
-    #   favorites_sync_archive           auto-archive newly discovered items
-    #   favorites_sync_categories        favcat ID whitelist (() = scan all)
-    #   favorites_sync_state             JSON file persisting scanned gids
-    #   favorites_sync_match_threshold   consecutive known gids that stop an
-    #                                    incremental scan
-    #   favorites_sync_max_pages         hard cap on pages scanned per run
-    favorites_sync_interval_seconds: float = 0.0
-    favorites_sync_archive: bool = False
-    favorites_sync_categories: tuple[int, ...] = ()
-    favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
-    favorites_sync_match_threshold: int = 5
-    favorites_sync_max_pages: int = 50
-
     # --- Home navigation (TOML-driven layout) ---
     # Path to a TOML file declaring ``[[group]]`` and ``[[navigation]]``
     # sections.  Each section is a ``(type, query)`` pair:
@@ -448,7 +409,7 @@ def load_settings() -> Settings:
         archive_quality=(os.getenv("ARCHIVE_QUALITY", "original").strip().lower() or "original"),
         archive_download_concurrency=_int(os.getenv("ARCHIVE_DOWNLOAD_CONCURRENCY"), 5),
         favorites_sync_interval_seconds=_float(
-            os.getenv("FAVORITES_SYNC_INTERVAL_SECONDS"), 0.0
+            os.getenv("FAVORITES_SYNC_INTERVAL_SECONDS"), 3600.0
         ),
         favorites_sync_archive=_bool(os.getenv("FAVORITES_SYNC_ARCHIVE"), False),
         favorites_sync_categories=_ints(os.getenv("FAVORITES_SYNC_CATEGORIES")),
