@@ -173,6 +173,10 @@ class GalleryListItem:
     publish_time: str = ""
     language: str = ""  # from list-page tags (empty when layout lacks tags)
     is_expunged: bool = False
+    # Favorites category id the gallery sits in (from the favorites page's
+    # posted-element title attr; None on non-favorites pages or when the
+    # lookup fails — graceful degradation, never raises).
+    favcat: int | None = None
     # Tags parsed from the list page (layout dependent: compact/extended carry
     # the full set, thumbnail only featured tags, minimal none). Featured tags
     # carry `style`; non-featured tags have style=None.
@@ -194,6 +198,9 @@ class GalleryPageInfo:
     prev_gid: int | None = None
     total_count: int | None = None
     next_page: int | None = None  # .ptt page-number pagination (toplist)
+    # Favorites-category map id -> name, parsed only on /favorites.php pages
+    # (empty on every other list type).
+    favcat_map: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass

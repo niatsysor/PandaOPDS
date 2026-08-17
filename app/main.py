@@ -19,6 +19,9 @@ from .archive.store import ArchiveStore
 from .config import ConfigError, load_settings
 from .eh.exceptions import EHException
 from .eh.service import EHService
+from .favorites.router import router as favorites_router
+from .favorites.state import FavoritesSyncState
+from .favorites.sync import FavoritesSyncer
 from .opds.router import router as opds_router
 from .opds2.router import router as opds2_router
 from .stream.router import router as stream_router
@@ -70,6 +73,16 @@ async def lifespan(app: FastAPI):
     service.attach_archive(archive_manager)
     app.state.archive = archive_manager
 
+    # Favorites syncer: periodic incremental scan (+ optional auto-archive).
+    favorites_syncer = FavoritesSyncer(
+        settings,
+        service=service,
+        archive=archive_manager,
+        state=FavoritesSyncState(settings.favorites_sync_state),
+    )
+    app.state.favorites = favorites_syncer
+    favorites_syncer.start()
+
     if settings.auth_enabled:
         exempt = ("/health", *settings.auth_exempt_paths)
         logger.info(
@@ -95,6 +108,9 @@ async def lifespan(app: FastAPI):
         settings.image_cache_enabled,
     )
     yield
+    favorites_syncer = getattr(app.state, "favorites", None)
+    if favorites_syncer is not None:
+        await favorites_syncer.stop()
     await service.close()
 
 
@@ -109,6 +125,7 @@ app.include_router(opds_router)
 app.include_router(opds2_router)
 app.include_router(stream_router)
 app.include_router(archive_router)
+app.include_router(favorites_router)
 app.include_router(webui_router)
 
 

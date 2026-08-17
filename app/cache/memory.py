@@ -55,6 +55,19 @@ class MemoryCache:
         async with self._lock:
             self._data.pop(key, None)
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every key starting with ``prefix``; returns the count.
+
+        Used to invalidate a whole list-cache family (e.g. ``list:favorites``
+        after a write op mutates the upstream favorites page)."""
+        removed = 0
+        async with self._lock:
+            for key in list(self._data):
+                if key.startswith(prefix):
+                    del self._data[key]
+                    removed += 1
+        return removed
+
     async def clear(self) -> None:
         async with self._lock:
             self._data.clear()

@@ -132,6 +132,16 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 - **删除**：仅删本地文件；E-Hentai 账户归档记录保留，可随时重下。
 - **架构**：`app/archive/store.py`（持久目录：扫描重建索引/meta 原子写/zip 页读取）+ `app/archive/manager.py`（状态机/单飞行/并发/下载→格式检测→zip 化→校验）+ `app/archive/router.py`（`/api/archive/*`）；`EHService.get_image()` 在磁盘 LRU 前查 `archive.get_page_bytes()`；archiver 页面解析在 `app/eh/parser.py::parse_archiver_page`（真实结构：dltype 表单 + Download Cost/Estimated Size/unlocked 解析 + hath/start 链接提取 + 错误文案映射 `ArchiverUnavailableError`/`InsufficientGPError`）。
 
+### 收藏夹（写操作代理 + 周期同步）
+
+**写操作代理**：远程客户端（快捷指令/脚本）经 `POST /api/favorites` 把收藏操作转发给 EH——`action=add|move|remove` + `gid`/`token`/`favcat`/`note`（单条）或 `items` 批量（≤200，顺序逐项 POST）。底层统一走 `gallerypopups.php?gid=&t=&act=addfav`（add/move 同机制，写入新 favcat 即移动；remove 传 `favcat=favdel`；参考 `example/ehentai.py` 与 JHenTai `requestAddFavorite/requestRemoveFavorite`）。**成功判定 = HTTP 200**（与参考实现一致；sadpanda/空 body/banned/403 由 client `_check_failure` 映射异常）。所有写操作：KIND_HTML 限流池 + `establish_session` + 熔断检查，**成功后失效 `list:favorites:*` 内存缓存**（10min 列表缓存否则展示旧数据）。需 IPB 登录态（派生 `bool(ipb_member_id and ipb_pass_hash)`，无独立开关；无登录态 403）。
+
+- **favcat 目录**：`GET /api/favorites/categories` 返回 id+name（解析自 `/favorites.php` 分类选择器 `div.nosel div.fp[onclick]` 的 `favcat=` + 第 3 个子 div 文本；内存缓存 10min）。列表解析器同时把 posted 元素 `title` 属性（收藏夹名）反查为每条的 `favcat`（`GalleryListItem.favcat`，非收藏页/解析失败 = None，优雅降级）。
+- **周期同步**：`FavoritesSyncer`（`app/favorites/sync.py`）按 `FAVORITES_SYNC_INTERVAL_SECONDS`（默认 0=关）周期增量扫描 `/favorites.php`（`inline_set=fs_f dm_e` 强制收藏时间排序 + extended 布局，**不走列表缓存**），连续 `FAVORITES_SYNC_MATCH_THRESHOLD`（默认 5）个已知 gid 停止翻页（对齐参考实现 `MATCH_THRESHOLD=5`；区别于参考的增量模式无页数限制，此处增加 `FAVORITES_SYNC_MAX_PAGES`=50 硬上限防跑飞），`FAVORITES_SYNC_CATEGORIES`（favcat ID 白名单，逗号分隔）留空全扫、非空仅扫名单内（名单外条目不参与停止条件）。快照持久化于 `FAVORITES_SYNC_STATE`（默认 `./favorites_sync.json`，原子写）：`known`/`archived`/`errors`/`baseline`/`last_run`。
+- **基线（baseline）语义**：**首次运行只建档不归档**——全量扫描（受页数上限约束）把当前所有 scoped 收藏记入 `known` 并置 `baseline=true`，但**绝不自动归档**（空快照上开启自动归档会把存量全部当"新增"一次性消耗 GP）；**自第二次运行起**才对真正新增项按 `FAVORITES_SYNC_ARCHIVE` 执行归档。删除状态文件即重置基线（下次运行重新建档、仍不归档）。
+- **自动归档**：`FAVORITES_SYNC_ARCHIVE`（默认 0）**必须手动开启**才对新发现条目调用 `ArchiveManager.start()`（GP 消耗风险显式知情）；双重去重（快照 `archived` 集合 + archive store 已存在条目任一命中即跳过）；失败逐项记录 `errors` 并视为已知（**不自动重试**，防永久失败条目重复扣 GP）；手动 `POST /api/favorites/sync/run` 单飞行与周期任务互斥，周期关闭时仍可用。
+- **架构**：`app/favorites/state.py`（原子 JSON 快照）+ `app/favorites/sync.py`（周期任务/单飞行/白名单/去重/容错）+ `app/favorites/router.py`（`/api/favorites/*`）；写操作实现位于 `app/eh/client.py::add_favorite/move_favorite/remove_favorite/fetch_favorite_categories`，聚合在 `EHService.favorite_action/favorite_categories/scan_favorites`；favcat 解析在 `app/eh/parser.py::parse_favcat_map/parse_favorites_categories`。
+
 ## OPDS-PSE 规范要点（服务端必须严格遵循，v1.2 与 v2.0 共用串流语义）
 
 规范原文：`http://vaemendis.net/opds-pse/`（2014-12-01，v1.0）。参考实现：Tachidesk/Suwayomi（`server/src/main/kotlin/suwayomi/tachidesk/opds/`，格式对齐对象）。
@@ -190,6 +200,10 @@ E-Hentai 官方 archiver 服务：登录 + 星会员 + GP。PandaOPDS 通过 Web
 | `POST /api/archive/{gid}/{token}/metadata/refresh` | 手动刷新元数据：force 拉取 gdata 最新 metadata + 封面并覆盖本地快照（不触发下载、不扣 GP；无 IPB 亦可，gdata/封面均公开） |
 | `DELETE /api/archive/{gid}/{token}` | 删除本地归档（取消任务 + 删文件；账户归档记录保留，可重下） |
 | `POST /api/archive/{gid}/{token}/refresh` | 重新 POST 重准备并重下（免费档不扣 GP） |
+| `POST /api/favorites` | **收藏夹写操作代理**：body `{"action": "add\|move\|remove", "gid", "token", "favcat", "note"}` 单条，或 `{"action", "favcat", "items": [{"gid", "token"}, ...]}` 批量（≤200）；经 `gallerypopups.php?act=addfav` 转发 EH（move = 写入新 favcat，remove = `favcat=favdel`）；逐项返回 ok/error；成功后失效 `list:favorites:*` 缓存；需 IPB 登录态（无则 403） |
+| `GET /api/favorites/categories` | 收藏夹目录列表（id + name，来自 `/favorites.php` 分类选择器，缓存 10min） |
+| `GET /api/favorites/sync` | 收藏夹同步状态（周期/自动归档开关/白名单/已知与已归档计数/上次运行） |
+| `POST /api/favorites/sync/run` | 手动触发一轮增量扫描（快捷指令友好；单飞行与周期任务互斥；周期关闭时仍可用） |
 
 根路径 `/` 与 `/api/*` 命名空间由 WebUI 独占（勿在其上挂新路由）；`/health` 为独立探活端点（`app/main.py`），互不冲突。
 

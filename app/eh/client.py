@@ -298,6 +298,75 @@ class EHClient:
         self._check_failure(resp)
         return resp.text
 
+    # -- favorites (gallerypopups.php) -------------------------------------
+
+    async def _favorite_post(
+        self, gid: int, token: str, form_data: dict[str, str]
+    ) -> str:
+        """POST gallerypopups.php (addfav popup form).
+
+        Mirrors the real form: gid/token in the query, the payload in the
+        body (favcat/favnote/apply/update). Moving a favorite is the same
+        addfav call with a different ``favcat``; removing sends
+        ``favcat=favdel``. Success markers are checked by the caller on the
+        returned HTML; hard failures (banned / empty body / fatal page) are
+        mapped by ``_check_failure`` inside ``_request``.
+        """
+        resp = await self._request(
+            "POST",
+            f"{self.settings.http_origin}/gallerypopups.php",
+            params={"gid": str(gid), "t": token, "act": "addfav"},
+            form_data=form_data,
+            referer=f"{self.settings.http_origin}/g/{gid}/{token}/",
+        )
+        return resp.text
+
+    async def add_favorite(
+        self, gid: int, token: str, favcat: int | str, note: str = ""
+    ) -> str:
+        """Add the gallery to favorites folder ``favcat`` (or move it there
+        when already favorited — EH treats a fresh favcat as a move)."""
+        return await self._favorite_post(
+            gid, token,
+            {
+                "favcat": str(favcat),
+                "favnote": note,
+                "apply": "Add to Favorites",
+                "update": "1",
+            },
+        )
+
+    async def move_favorite(
+        self, gid: int, token: str, favcat: int | str, note: str = ""
+    ) -> str:
+        """Move the gallery to favorites folder ``favcat`` (same addfav form
+        with 'Apply Changes')."""
+        return await self._favorite_post(
+            gid, token,
+            {
+                "favcat": str(favcat),
+                "favnote": note,
+                "apply": "Apply Changes",
+                "update": "1",
+            },
+        )
+
+    async def remove_favorite(self, gid: int, token: str) -> str:
+        """Remove the gallery from favorites (``favcat=favdel``)."""
+        return await self._favorite_post(
+            gid, token,
+            {
+                "favcat": "favdel",
+                "favnote": "",
+                "apply": "Apply Changes",
+                "update": "1",
+            },
+        )
+
+    async def fetch_favorite_categories(self) -> str:
+        """GET /favorites.php (category picker page) for favcat map parsing."""
+        return await self.get_html("/favorites.php")
+
     # -- archiver (GP-purchased archives) ---------------------------------
 
     async def get_archiver_page(self, gid: int, token: str) -> str:

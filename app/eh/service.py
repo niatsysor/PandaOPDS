@@ -27,7 +27,13 @@ from .models import (
     GalleryPageInfo,
     ImagePageInfo,
 )
-from .parser import parse_detail_page, parse_gdata_response, parse_image_page, parse_list_page
+from .parser import (
+    parse_detail_page,
+    parse_favorites_categories,
+    parse_gdata_response,
+    parse_image_page,
+    parse_list_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +206,137 @@ class EHService:
             # toplist `p` is 0-based (displayed N <-> p=N-1).
             params["p"] = str(page - 1)
         return await self._list_page(f"toplist:{period}:{page}", "https://e-hentai.org/toplist.php", params)
+
+    # -- favorites (write ops + categories) --------------------------------
+
+    async def favorite_action(
+        self,
+        action: str,
+        items: list[tuple[int, str]],
+        favcat: int | str | None = None,
+        note: str = "",
+    ) -> list[dict]:
+        """Proxy a favorites write op (add|move|remove) for one or many galleries.
+
+        Sequential per-item POSTs through the HTML throttle (each
+        gallerypopups form is per-gallery; batching = looping). Every item
+        reports its own ok/error so one failure never aborts the batch. On
+        any success the ``list:favorites:*`` memory cache is invalidated so
+        the OPDS favorites feed reflects the mutation immediately.
+
+        A 200 response is treated as success (same contract as the reference
+        implementation); real failure modes (sadpanda/empty body, banned,
+        403) are mapped to exceptions by the client's ``_check_failure``.
+        """
+        out: list[dict] = []
+        ok_any = False
+        for gid, token in items:
+            try:
+                async with self.throttle.acquired(KIND_HTML):
+                    await self.client.establish_session()
+                    if action == "remove":
+                        await self.client.remove_favorite(gid, token)
+                    elif action == "move":
+                        await self.client.move_favorite(gid, token, favcat, note)
+                    else:
+                        await self.client.add_favorite(gid, token, favcat, note)
+            except EHException as exc:
+                await self._trip_if_fatal(exc)
+                out.append({"gid": gid, "token": token, "ok": False, "error": str(exc)})
+                continue
+            out.append({"gid": gid, "token": token, "ok": True})
+            ok_any = True
+        if ok_any:
+            await self.mem.delete_prefix("list:favorites")
+        return out
+
+    async def favorite_categories(self) -> dict[int, str]:
+        """Favorites-category map (id -> name), memory-cached ~10min.
+
+        Read from /favorites.php (the category picker) — the same page the
+        read-only favorites feed already fetches, so no new upstream URL.
+        """
+        key = self._mem_key("favcat")
+
+        async def _fetch() -> dict[int, str]:
+            html = await self._html_get("/favorites.php")
+            return parse_favorites_categories(html)
+
+        return await self.mem.get_or_set(
+            key, _fetch, self.settings.list_cache_ttl_seconds
+        )
+
+    async def scan_favorites(
+        self,
+        known_gids: set[str],
+        *,
+        favcat_whitelist: tuple[int, ...] = (),
+        match_threshold: int = 5,
+        max_pages: int = 50,
+    ) -> dict:
+        """Fresh (uncached) incremental scan of /favorites.php.
+
+        Walks pages newest-favorited-first (``inline_set=fs_f dm_e`` forces
+        the fav-time sort and the extended layout). Stops after
+        ``match_threshold`` consecutive *scoped* galleries already present in
+        ``known_gids`` (``gid:token`` strings) or after ``max_pages`` pages.
+
+        ``favcat_whitelist`` restricts scope: empty = every gallery, otherwise
+        only galleries whose favcat id is listed. Out-of-scope galleries are
+        skipped entirely (they never count toward the stop condition).
+
+        Returns ``{"new": [...], "seen": [...], "favcat_map": {...},
+        "pages": n}`` where ``new`` are scoped galleries not in ``known`` and
+        ``seen`` is every scoped ``(gid, token)`` encountered (for state
+        persistence).
+        """
+        params = {"inline_set": "fs_f dm_e"}
+        new_items: list[GalleryListItem] = []
+        seen: list[tuple[int, str]] = []
+        favcat_map: dict[int, str] = {}
+        consecutive = 0
+        pages = 0
+        next_gid: int | None = None
+
+        while pages < max_pages:
+            pages += 1
+            p = dict(params)
+            if next_gid is not None:
+                p["next"] = str(next_gid)
+            html = await self._html_get("/favorites.php", params=p)
+            info = parse_list_page(html)
+            favcat_map = info.favcat_map or favcat_map
+            if not info.galleries:
+                break
+
+            for g in info.galleries:
+                if favcat_whitelist and g.favcat not in favcat_whitelist:
+                    continue
+                key = f"{g.gid}:{g.token}"
+                seen.append((g.gid, g.token))
+                if key in known_gids:
+                    consecutive += 1
+                    if consecutive >= match_threshold:
+                        return {
+                            "new": new_items,
+                            "seen": seen,
+                            "favcat_map": favcat_map,
+                            "pages": pages,
+                        }
+                else:
+                    consecutive = 0
+                    new_items.append(g)
+
+            if info.next_gid is None:
+                break
+            next_gid = info.next_gid
+
+        return {
+            "new": new_items,
+            "seen": seen,
+            "favcat_map": favcat_map,
+            "pages": pages,
+        }
 
     async def _html_get(self, path: str, params: dict[str, str] | None = None) -> str:
         async with self.throttle.acquired(KIND_HTML):

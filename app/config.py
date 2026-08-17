@@ -138,6 +138,31 @@ class Settings:
     # disable profiles and rely on the per-request ``inline_set`` override.
     eh_profile: str = "PandaOPDS"
 
+    # --- Favorites operations & sync ---
+    # Favorites write operations (add/move/remove via gallerypopups.php)
+    # require IPB cookies (derived, no separate switch); the API returns 403
+    # without them, matching the archive gate.
+    #
+    # Periodic favorites sync (background task):
+    #   favorites_sync_interval_seconds  interval in seconds; 0 = disabled.
+    #   favorites_sync_archive           when true, newly discovered scoped
+    #                                    favorites are auto-archived (GP cost!)
+    #                                    — must be explicitly enabled by the
+    #                                    operator, default off.
+    #   favorites_sync_categories        favcat ID whitelist (comma-separated);
+    #                                    empty = scan all categories.
+    #   favorites_sync_state             JSON file persisting the scanned-gid
+    #                                    snapshot (known/archived/errors).
+    #   favorites_sync_match_threshold   consecutive known gids that stop an
+    #                                    incremental scan.
+    #   favorites_sync_max_pages         hard page cap per scan (safety).
+    favorites_sync_interval_seconds: float = 0.0
+    favorites_sync_archive: bool = False
+    favorites_sync_categories: tuple[int, ...] = ()
+    favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
+    favorites_sync_match_threshold: int = 5
+    favorites_sync_max_pages: int = 50
+
     # --- Archive (E-Hentai archiver, GP-purchased) ---
     # Persistent data directory holding purchased archives as unified zip
     # (cbz) masters + meta.json per gallery. Independent of the disk LRU
@@ -153,6 +178,45 @@ class Settings:
     archive_dir: Path = field(default_factory=lambda: Path("./archives"))
     archive_quality: str = "original"
     archive_download_concurrency: int = 5
+
+    # --- Favorites operations & sync ---
+    # Favorites write ops (add/move/remove via gallerypopups.php) require IPB
+    # cookies (derived from ipb_member_id+ipb_pass_hash, same as the archiver).
+    #
+    # Favorites sync (periodic background scan + optional auto-archive):
+    #   favorites_sync_interval_seconds  interval between scans (0 = disabled)
+    #   favorites_sync_archive           auto-archive newly discovered items
+    #                                    (GP cost! must be enabled manually)
+    #   favorites_sync_categories        favcat ID whitelist (() = scan all)
+    #   favorites_sync_state             JSON file persisting scanned gids
+    #   favorites_sync_match_threshold   consecutive known gids that stop an
+    #                                    incremental scan
+    #   favorites_sync_max_pages         hard cap on pages scanned per run
+    favorites_sync_interval_seconds: float = 0.0
+    favorites_sync_archive: bool = False
+    favorites_sync_categories: tuple[int, ...] = ()
+    favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
+    favorites_sync_match_threshold: int = 5
+    favorites_sync_max_pages: int = 50
+
+    # --- Favorites operations & sync ---
+    # Favorites write ops (add/move/remove via gallerypopups.php) require
+    # IPB cookies (derived, no switch; 403 without).
+    #
+    # Favorites sync (periodic background scan):
+    #   favorites_sync_interval_seconds  interval between scans (0 = disabled)
+    #   favorites_sync_archive           auto-archive newly discovered items
+    #   favorites_sync_categories        favcat ID whitelist (() = scan all)
+    #   favorites_sync_state             JSON file persisting scanned gids
+    #   favorites_sync_match_threshold   consecutive known gids that stop an
+    #                                    incremental scan
+    #   favorites_sync_max_pages         hard cap on pages scanned per run
+    favorites_sync_interval_seconds: float = 0.0
+    favorites_sync_archive: bool = False
+    favorites_sync_categories: tuple[int, ...] = ()
+    favorites_sync_state: Path = field(default_factory=lambda: Path("./favorites_sync.json"))
+    favorites_sync_match_threshold: int = 5
+    favorites_sync_max_pages: int = 50
 
     # --- Home navigation (TOML-driven layout) ---
     # Path to a TOML file declaring ``[[group]]`` and ``[[navigation]]``
@@ -283,6 +347,20 @@ def load_settings() -> Settings:
             return default
         return value.strip().lower() in {"1", "true", "yes", "on"}
 
+    def _ints(value: str | None) -> tuple[int, ...]:
+        """Parse a comma-separated integer whitelist (marks ''/None -> ())."""
+        if value is None:
+            return ()
+        out: list[int] = []
+        for part in value.split(","):
+            part = part.strip()
+            if part:
+                try:
+                    out.append(int(part))
+                except ValueError:
+                    pass
+        return tuple(out)
+
     def _acq_detail(value: str | None, legacy: str | None) -> bool:
         """Parse OPDS_ACQ_DETAIL (bool): true -> acquisition targets the
         detail document (second-request flow); false (default) -> acquisition
@@ -369,5 +447,17 @@ def load_settings() -> Settings:
         archive_dir=Path(os.getenv("ARCHIVE_DIR", "./archives")),
         archive_quality=(os.getenv("ARCHIVE_QUALITY", "original").strip().lower() or "original"),
         archive_download_concurrency=_int(os.getenv("ARCHIVE_DOWNLOAD_CONCURRENCY"), 5),
+        favorites_sync_interval_seconds=_float(
+            os.getenv("FAVORITES_SYNC_INTERVAL_SECONDS"), 0.0
+        ),
+        favorites_sync_archive=_bool(os.getenv("FAVORITES_SYNC_ARCHIVE"), False),
+        favorites_sync_categories=_ints(os.getenv("FAVORITES_SYNC_CATEGORIES")),
+        favorites_sync_state=Path(
+            os.getenv("FAVORITES_SYNC_STATE", "./favorites_sync.json")
+        ),
+        favorites_sync_match_threshold=_int(
+            os.getenv("FAVORITES_SYNC_MATCH_THRESHOLD"), 5
+        ),
+        favorites_sync_max_pages=_int(os.getenv("FAVORITES_SYNC_MAX_PAGES"), 50),
     )
     return settings

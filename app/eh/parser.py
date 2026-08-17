@@ -110,6 +110,45 @@ _PUBLISH_SELECTORS = {
     "minimal": ".gl2m > div:nth-child(2)",
 }
 
+# Favorites-page favcat popup links: `div.fp` inside the `div.nosel` (category
+# picker) carry `onclick="popUp('...gallerypopups.php?favcat=N...')"`. The
+# category name lives in that element's 3rd child div (reference impl).
+_FAVCAT_POPUP_RE = re.compile(r"favcat=(\d+)")
+
+
+def parse_favcat_map(doc: Any) -> dict[int, str]:
+    """Parse the favorites-category id -> name map from a /favorites.php page.
+
+    Matches ``div.nosel div.fp[onclick]`` (the category picker columns); the
+    favcat id comes from the onclick URL and the name from the 3rd child div.
+    An empty map on non-favorites pages is normal — callers must tolerate it
+    (all galleries then carry favcat=None).
+    """
+    out: dict[int, str] = {}
+    for fp in _el(doc, "div.nosel div.fp[onclick]"):
+        onclick = _attr(fp, "onclick")
+        m = _FAVCAT_POPUP_RE.search(onclick)
+        if not m:
+            continue
+        # the name is the 3rd child div (per the reference implementation; the
+        # 1st/2nd are the cat label/summary) — fall back to the element text.
+        children = [c for c in fp if getattr(c, "tag", None) == "div"]
+        name = ""
+        if len(children) >= 2:
+            name = _text(children[2]) if len(children) >= 3 else _text(children[1])
+        if not name:
+            name = _text(fp)
+        try:
+            out[int(m.group(1))] = name.strip()
+        except ValueError:
+            continue
+    return out
+
+
+def parse_favorites_categories(html_text: str) -> dict[int, str]:
+    """Parse the favorites-category map from raw /favorites.php HTML."""
+    return parse_favcat_map(html.fromstring(html_text))
+
 # Recognised publish-time formats; the first match wins.
 _PUBLISH_DT_FORMATS = ("%Y-%m-%d %H:%M", "%d %B %Y, %H:%M", "%d %b %Y, %H:%M")
 
@@ -217,6 +256,23 @@ def _parse_list_publish_time(row: Any, view: str) -> str:
     if not sel:
         return ""
     return _text(_first(row, sel))
+
+
+def _parse_favcat(row: Any, view: str, name_to_id: dict[str, int] | None) -> int | None:
+    """Favorites category id for a gallery row (None when not on favorites).
+
+    On /favorites.php pages the posted element's ``title`` attribute carries
+    the folder name (e.g. "Common") — reverse-looked-up via the page-wide
+    favcat map. Any other page has no map and yields None (graceful)."""
+    if not name_to_id:
+        return None
+    sel = _PUBLISH_SELECTORS.get(view)
+    if not sel:
+        return None
+    title = _attr(_first(row, sel), "title")
+    if not title:
+        return None
+    return name_to_id.get(title.strip())
 
 
 def _list_language(tags: list[GalleryTag]) -> str:
@@ -478,8 +534,15 @@ def _parse_cover_url(img: Any | None) -> str:
     return _attr(img, "data-src") or _attr(img, "src")
 
 
-def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
-    """Extract a gallery entry from one list-page row (any of the 4 views)."""
+def _parse_list_item(
+    row: Any,
+    view: str = "compact",
+    name_to_id: dict[str, int] | None = None,
+) -> GalleryListItem | None:
+    """Extract a gallery entry from one list-page row (any of the 4 views).
+
+    ``name_to_id`` is the favorites-page favcat name→id map (None elsewhere),
+    used to attach the gallery's current favorites category id."""
     # First anchor whose href points at a gallery page.
     gallery_url: GalleryUrl | None = None
     for a in _el(row, "a[href]"):
@@ -512,6 +575,7 @@ def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
 
     is_expunged = _first(row, ".glink s") is not None
 
+    favcat = _parse_favcat(row, view, name_to_id)
     tags = _parse_list_tags(row, view)
     return GalleryListItem(
         gid=gallery_url.gid,
@@ -524,6 +588,7 @@ def _parse_list_item(row: Any, view: str = "compact") -> GalleryListItem | None:
         publish_time=_parse_list_publish_time(row, view),
         language=_list_language(tags),
         is_expunged=is_expunged,
+        favcat=favcat,
         tags=tags,
     )
 
@@ -583,6 +648,11 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
     """Parse a list/search page (all four front-page views)."""
     doc = html.fromstring(html_text)
 
+    # Favorites category map (empty on non-favorites pages); the reverse map
+    # attaches each gallery's current favcat via its posted-element title.
+    favcat_map = parse_favcat_map(doc)
+    name_to_id = {name: fav_id for fav_id, name in favcat_map.items()}
+
     galleries: list[GalleryListItem] = []
     for view, container in zip(_LIST_VIEWS, _LIST_CONTAINERS):
         rows = _el(doc, container)
@@ -592,7 +662,7 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
             # skip ad rows / header rows (only 1 child or contains <th>)
             if len(row) == 1 or _first(row, "th") is not None:
                 continue
-            item = _parse_list_item(row, view)
+            item = _parse_list_item(row, view, name_to_id)
             if item is not None:
                 galleries.append(item)
         break  # only the first matching view layout is used
@@ -637,6 +707,7 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
         next_gid=next_gid,
         prev_gid=_nav_gid("#uprev"),
         total_count=total_count,
+        favcat_map=favcat_map,
         # page-number pagination only when lastGid pagination is absent
         next_page=None if next_gid is not None else _nav_page(),
     )
