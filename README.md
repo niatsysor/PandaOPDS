@@ -6,19 +6,44 @@
 
 ## 部署
 
-### Docker（推荐）
+镜像由 GitHub Actions 自动构建发布至 `ghcr.io/niatsysor/pandaopds`（多架构 linux/amd64 + linux/arm64，树莓派/NAS 直接使用）。免构建启动：
+
+### 方式一：一行命令（无需克隆仓库）
+
+登录 e-hentai.org，从浏览器 cookie 取 `ipb_member_id` / `ipb_pass_hash` 填入：
+
+```bash
+docker run -d --name pandaopds --restart unless-stopped \
+  -p 127.0.0.1:8000:8000 \
+  -e IPB_MEMBER_ID=<your_id> \
+  -e IPB_PASS_HASH=<your_hash> \
+  -e CACHE_DIR=/data/cache \
+  -e ARCHIVE_DIR=/data/archives \
+  -v pandaopds-cache:/data/cache \
+  -v pandaopds-archives:/data/archives \
+  ghcr.io/niatsysor/pandaopds:latest
+```
+
+可选参数：`-e EH_SITE=exhentai`、`-e PUBLIC_BASE_URL=https://opds.example.com`（反代下输出绝对 URL）、`-e AUTH_USERNAME=xxx -e AUTH_PASSWORD=xxx`（两者都设置才启用 Basic Auth）、`-v ./config:/config`（自定义 OPDS 2.0 首页布局）。
+
+### 方式二：Docker Compose（开箱即用）
 
 ```bash
 git clone https://github.com/<your-name>/PandaOPDS.git
 cd PandaOPDS
+cp .env.example .env     # 填入 IPB_MEMBER_ID / IPB_PASS_HASH
+# 高级可选配置见 .env.example 注释
 
-# 1. 登录 e-hentai.org，从浏览器 cookie 中取 ipb_member_id 与 ipb_pass_hash
-cp .env.example .env
-# 编辑 .env，填入 IPB_MEMBER_ID / IPB_PASS_HASH
-
-# 2. 启动
-docker compose up -d --build
+docker compose up -d     # 直接拉取预构建镜像，不构建
+# 升级：docker compose pull && docker compose up -d
+# 固定版本：发布 tag（如 v0.2.0）存在后，把 image 改为 ghcr.io/niatsysor/pandaopds:v0.2.0
 ```
+
+### 方式三：本地构建（开发者 / ghcr 拉取受限时）
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```", "edits"}]
 
 ### 可选配置
 

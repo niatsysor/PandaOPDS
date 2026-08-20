@@ -1,0 +1,10 @@
+# Local-build overlay for PandaOPDS.
+#
+# Builds the image from this repository instead of pulling the prebuilt one:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Use when developing locally, or when ghcr.io is unreachable.
+
+services:
+  pandaopds:
+    build: .
