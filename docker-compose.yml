@@ -39,9 +39,16 @@ services:
       # --- deployment-level switches (.env may override; defaults shown here) ---
       OPDS_ACQ_DETAIL: ${OPDS_ACQ_DETAIL:-false}   # false=acquisition→image stream; true=→detail doc
       FAVORITES_SYNC_ARCHIVE: ${FAVORITES_SYNC_ARCHIVE:-0}      # auto-archive new favorites (GP cost!)
-      # --- throttling: conservative presets ship inside the image (Dockerfile
-      #     ENV: 1.5s / 2 / 5 / 25) and are NOT listed here on purpose — keep
-      #     unless you know. Override only via .env (env_file wins over image ENV). ---
+      # --- throttling (ban-avoidance) ---
+      # Recommended values are conservative: safe for multi-client / server
+      # deployments (single IP aggregating all clients' traffic). For a
+      # single-user self-hosted setup you can safely try the hotter app
+      # defaults instead: HTML_INTERVAL_SECONDS=0.3 and MAX_CONCURRENCY=5
+      # (set them in .env). IMAGE/THUMB concurrency are identical either way.
+      HTML_INTERVAL_SECONDS: ${HTML_INTERVAL_SECONDS:-1.5}
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-2}
+      IMAGE_MAX_CONCURRENCY: ${IMAGE_MAX_CONCURRENCY:-5}
+      THUMB_MAX_CONCURRENCY: ${THUMB_MAX_CONCURRENCY:-25}
     volumes:
       - cache-data:/data/cache
       - archive-data:/data/archives   # persistent GP archive masters

@@ -96,10 +96,10 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `ARCHIVE_DIR` | `./archives` | 归档持久目录（zip 母本 + meta.json；建议独立卷） |
 | `ARCHIVE_QUALITY` | `original` | 默认画质档（start 未传 quality 时） |
 | `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载/7z 转换并发上限，其余排队 |
-| `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；**Docker 镜像内置预设 `1.5`**（compose 部署无需配置，.env 可覆盖） |
-| `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；**Docker 镜像内置预设 `2`** |
+| `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；**compose/Docker 镜像推荐保守值 `1.5`**（单用户自用可安全尝试 `0.3`，在 .env 设置） |
+| `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；**compose/Docker 镜像推荐保守值 `2`**（单用户自用可安全尝试 `5`） |
 | `IMAGE_MAX_CONCURRENCY` | `5` | 全图（`/stream` 原图）并发上限：509 配额流量，保守 |
-| `THUMB_MAX_CONCURRENCY` | `25` | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发；**Docker 镜像内置预设 `25`** |
+| `THUMB_MAX_CONCURRENCY` | `25` | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发 |
 | `TIMEOUT_SECONDS` | `6` | 出站请求超时（秒） |
 | `RETRIES` | `3` | 网络错误重试次数 |
 | `BANNED_COOLDOWN_SECONDS` | `1800` | IP 封禁熔断冷却（秒） |

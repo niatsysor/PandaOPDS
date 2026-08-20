@@ -1,9 +1,10 @@
 FROM python:3.11-slim
 
-# Conservative anti-ban presets for containerised deployments (the app
-# defaults are hotter: 0.3s interval / 5 concurrency). Not listed in
-# docker-compose on purpose — users shouldn't tune these. Overridable via
-# compose env_file / docker -e (env_file wins over image ENV).
+# Conservative presets for containerised deployments (single IP aggregating
+# multiple clients; the app defaults are hotter: 0.3s interval / 5
+# concurrency). compose lists the same values with guidance (see
+# docker-compose.yml) — single-user self-hosted deployments may safely go
+# hotter by overriding via env_file / docker -e (env_file wins over image ENV).
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME_CONFIG=/config/home.toml \
