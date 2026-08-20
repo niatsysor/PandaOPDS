@@ -670,10 +670,18 @@ def parse_list_page(html_text: str) -> GalleryPageInfo:
     if not galleries:
         galleries = _parse_generic_galleries(doc)
 
-    def _nav_gid(sel: str) -> int | None:
+    def _nav_gid(sel: str) -> str | None:
+        """lastGid pagination cursor from the #unext/#uprev hrefs.
+
+        EH emits a plain gid for most list pages (``?next=2367467``) but a
+        composite ``gid-favoritedAt`` cursor (``?next=2753175-1786365950``) on
+        /favorites.php sorted by favorited time (fs_f). Treat the value as an
+        opaque string and pass it through verbatim (mirrors the JHenTai
+        reference parser, which never int()-coerces it).
+        """
         href = _attr(_first(doc, sel), "href")
         m = re.search(r"(?:next|prev)=([\d-]+)", href or "")
-        return int(m.group(1)) if m else None
+        return m.group(1) if m else None
 
     def _nav_page() -> int | None:
         """Ranklist/toplist pages use `.ptt` page-number pagination (`?p=`)

@@ -152,12 +152,13 @@ class EHService:
     async def search_galleries(
         self,
         query: str = "",
-        last_gid: int | None = None,
+        last_gid: str | None = None,
         f_cats: int | None = None,
     ) -> GalleryPageInfo:
         """Search / latest list page.
 
-        `last_gid` enables `next` pagination.
+        `last_gid` enables `next` pagination — an opaque cursor string
+        (either a plain gid or a `gid-favoritedAt` composite from favorites).
         `f_cats` is the EH exclude-category bitmask (e.g. 1021 = Doujinshi only).
         """
         params: dict[str, str] = {}
@@ -171,16 +172,16 @@ class EHService:
         q_key = f"{query}:f_cats={f_cats}" if f_cats is not None else query
         return await self._list_page("search:" + q_key, "/", params)
 
-    async def popular_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
+    async def popular_galleries(self, last_gid: str | None = None) -> GalleryPageInfo:
         params = {"next": str(last_gid)} if last_gid is not None else {}
         return await self._list_page("popular", "/popular", params)
 
-    async def watched_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
+    async def watched_galleries(self, last_gid: str | None = None) -> GalleryPageInfo:
         """Watched galleries list (/watched). Reuses the standard list parser."""
         params = {"next": str(last_gid)} if last_gid is not None else {}
         return await self._list_page("watched", "/watched", params)
 
-    async def favorites_galleries(self, last_gid: int | None = None) -> GalleryPageInfo:
+    async def favorites_galleries(self, last_gid: str | None = None) -> GalleryPageInfo:
         """Favorites list (/favorites.php). Reuses the standard list parser."""
         params = {"next": str(last_gid)} if last_gid is not None else {}
         return await self._list_page("favorites", "/favorites.php", params)
@@ -296,7 +297,9 @@ class EHService:
         favcat_map: dict[int, str] = {}
         consecutive = 0
         pages = 0
-        next_gid: int | None = None
+        # Opaque cursor (plain gid or `gid-favoritedAt` composite for
+        # favorited-time-sorted favorites). Passed straight to `next=`.
+        next_gid: str | None = None
 
         while pages < max_pages:
             pages += 1

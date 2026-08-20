@@ -58,9 +58,37 @@ def test_parse_list_page_thumbnail_view():
     assert g1.page_count == 66
     assert g2.title == "Second Gallery"
     assert g2.category == "Doujinshi"
-    assert info.next_gid == 2165079
-    assert info.prev_gid == 2165081
+    assert info.next_gid == "2165079"
+    assert info.prev_gid == "2165081"
     assert info.total_count == 1234567
+
+
+FAVORITES_NAV_HTML = """
+<html><body>
+<table class="itg glte">
+  <tr>
+    <td class="gl1e"><a href="https://e-hentai.org/g/2753175/abc123/"><img src="/x/1.jpg"></a></td>
+    <td class="gl2e"><div class="gl3e"><div class="cn">Manga</div>
+      <div id="posted_2753175" title="Common">2026-08-11 12:00</div>
+      <div>42 pages</div>
+      <a href="https://e-hentai.org/g/2753175/abc123/"><div class="gl4e"><div class="glink">Old Favorite</div></div></a>
+    </div></td>
+  </tr>
+</table>
+<div class="searchnav"><a id="unext" href="?next=2753175-1786365950">Next</a></div>
+</body></html>
+"""
+
+
+def test_parse_list_page_dashed_cursor():
+    """Favorites sorted by favorited time emit a composite `gid-favtime`
+    cursor (`?next=2753175-1786365950`) instead of a plain gid. It must
+    survive parsing as an opaque string — never int()-coerced (would raise
+    ValueError and 500 the favorites feed)."""
+    info = parse_list_page(FAVORITES_NAV_HTML)
+    assert info.galleries[0].gid == 2753175
+    assert info.next_gid == "2753175-1786365950"
+    assert info.prev_gid is None
 
 
 COMPACT_LIST_HTML = """

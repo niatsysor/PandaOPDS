@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opds/v2.0", tags=["opds2"])
 
+# EH `next=` lastGid cursor: a plain gid ("2367467") or a favorites
+# composite cursor ("2753175-1786365950”, gid-favoritedAt). Anything else
+# is malformed and rejected before it reaches the upstream request.
+_NEXT_CURSOR_RE = re.compile(r"^\d+(?:-\d+)*$")
+
 # Gallery URLs inside comment HTML: https://(e-hentai|exhentai).org/g/{gid}/{token}/
 # (optionally with ?p= / #anchors; /mpv/ viewer links map to the same detail doc).
 # The trailing `[^"']*` eats any query/fragment so the rewritten href always
@@ -402,12 +407,17 @@ async def open_search(request: Request):
 async def gallery_feed(
     request: Request,
     query: str = "",
-    next: int | None = None,  # lastGid pagination (from rel="next" href)
+    next: str | None = None,  # opaque lastGid cursor ("2367467" or "gid-favtime")
     category: str = "",
 ):
     service = _service(request)
     builder = _builder(request)
     settings = request.app.state.settings
+
+    if next is not None and not _NEXT_CURSOR_RE.fullmatch(next):
+        raise HTTPException(
+            status_code=400, detail="invalid next cursor (expected digits or gid-favtime)"
+        )
 
     # Resolve category name → f_cats exclude mask.
     f_cats: int | None = None

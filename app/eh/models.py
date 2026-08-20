@@ -194,8 +194,12 @@ class GalleryPageInfo:
     """
 
     galleries: list[GalleryListItem] = field(default_factory=list)
-    next_gid: int | None = None
-    prev_gid: int | None = None
+    # Opaque lastGid pagination cursor: a plain gid ("2367467") or a composite
+    # ``gid-favoritedAt`` cursor ("2753175-1786365950", /favorites.php sorted by
+    # favorited time). Kept as a raw string — never int()-coerced — and passed
+    # through verbatim to the upstream `next=`/`prev=` parameter.
+    next_gid: str | None = None
+    prev_gid: str | None = None
     total_count: int | None = None
     next_page: int | None = None  # .ptt page-number pagination (toplist)
     # Favorites-category map id -> name, parsed only on /favorites.php pages

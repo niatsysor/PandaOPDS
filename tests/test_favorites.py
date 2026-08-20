@@ -227,6 +227,25 @@ async def test_scan_favorites_paginates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_scan_favorites_composite_cursor_pagination(tmp_path):
+    """Favorited-time-sorted favorites page the `next` cursor through as an
+    opaque `gid-favtime` string (e.g. `2753175-1786365950`), never splitting
+    or int()-coercing it — otherwise pagination drifts or crashes."""
+    settings, client, service = make_service(tmp_path)
+    client.pages["/favorites.php"] = _fav_page(
+        [(100, "aaa", "New", "Common")],
+        next_gid="100-1786365950",
+    )
+    client.pages["/favorites.php?inline_set=fs_f dm_e&next=100-1786365950"] = _fav_page(
+        [(101, "bbb", "New2", "Common")]  # single known-ish page, then no next
+    )
+    result = await service.scan_favorites(set(), match_threshold=5, max_pages=5)
+    assert [g.gid for g in result["new"]] == [100, 101]
+    assert result["pages"] == 2
+    assert client.session_calls >= 2
+
+
+@pytest.mark.asyncio
 async def test_scan_favorites_whitelist(tmp_path):
     settings, client, service = make_service(tmp_path)
     client.pages["/favorites.php"] = _fav_page([

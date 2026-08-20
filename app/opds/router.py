@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,6 +29,11 @@ from .feed import (
 )
 
 logger = logging.getLogger(__name__)
+
+# EH `next=` lastGid cursor: a plain gid ("2367467") or a favorites
+# composite cursor ("2753175-1786365950”, gid-favoritedAt). Anything else
+# is malformed and rejected before it reaches the upstream request.
+_NEXT_CURSOR_RE = re.compile(r"^\d+(?:-\d+)*$")
 
 router = APIRouter(prefix="/opds/v1.2", tags=["opds"])
 
@@ -185,10 +191,15 @@ async def open_search(request: Request):
 async def gallery_feed(
     request: Request,
     query: str = "",
-    next: int | None = None,  # lastGid pagination (from rel="next" href)
+    next: str | None = None,  # opaque lastGid cursor ("2367467" or "gid-favtime")
 ):
     service = _service(request)
     builder = _builder(request)
+
+    if next is not None and not _NEXT_CURSOR_RE.fullmatch(next):
+        raise HTTPException(
+            status_code=400, detail="invalid next cursor (expected digits or gid-favtime)"
+        )
 
     try:
         if query == "popular":
