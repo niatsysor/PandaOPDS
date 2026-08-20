@@ -31,8 +31,13 @@ docker run -d --name pandaopds --restart unless-stopped \
 ```bash
 git clone https://github.com/<your-name>/PandaOPDS.git
 cd PandaOPDS
-cp .env.example .env     # 填入 IPB_MEMBER_ID / IPB_PASS_HASH
-# 高级可选配置见 .env.example 注释
+cp .env.example .env     # 可选：按需填写 IPB_MEMBER_ID / IPB_PASS_HASH（不复制也能直接启动，全默认）
+# 高级可选配置见 .env.example 注释 —— compose 经 env_file 把 .env **全部变量**批量透传进容器，
+# 无需在 docker-compose.yml 逐项映射；`.env` 文件缺失或为空也能正常启动（公开内容 + 默认配置），
+# 容器内 CACHE_DIR/ARCHIVE_DIR 固定指向持久卷，限流预设由镜像内置
+# 自定义 env 路径：
+#   PANDAPDS_ENV_FILE=/path/mine.env docker compose --env-file=/path/mine.env up -d
+# （两个参数须指向同一文件，保证 environment 插值与 env_file 同源）
 
 docker compose up -d     # 直接拉取预构建镜像，不构建
 # 升级：docker compose pull && docker compose up -d
@@ -78,8 +83,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `IPB_MEMBER_ID` | 空 | **必需**，登录 cookie（不填则 Watched/Favorites 不可用） |
-| `IPB_PASS_HASH` | 空 | **必需**，登录 cookie |
+| `IPB_MEMBER_ID` | 空 | 登录 cookie（**可选**：不填则仅公开内容，Watched/Favorites 不可用） |
+| `IPB_PASS_HASH` | 空 | 登录 cookie（与 IPB_MEMBER_ID 成对提供） |
 | `EH_SITE` | `e-hentai` | `e-hentai` \| `exhentai` |
 | `IGNEOUS` | 空 | 可选会话种子；exhentai 会话建立时自动下发，无需用户提供 |
 | `NW` | `1` | 绕过 Offensive For Everyone 警告 |
@@ -91,10 +96,10 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `ARCHIVE_DIR` | `./archives` | 归档持久目录（zip 母本 + meta.json；建议独立卷） |
 | `ARCHIVE_QUALITY` | `original` | 默认画质档（start 未传 quality 时） |
 | `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载/7z 转换并发上限，其余排队 |
-| `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；docker-compose 预设 `1.5` |
-| `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；docker-compose 预设 `2` |
+| `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；**Docker 镜像内置预设 `1.5`**（compose 部署无需配置，.env 可覆盖） |
+| `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；**Docker 镜像内置预设 `2`** |
 | `IMAGE_MAX_CONCURRENCY` | `5` | 全图（`/stream` 原图）并发上限：509 配额流量，保守 |
-| `THUMB_MAX_CONCURRENCY` | `25` | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发；docker-compose 预设 `25` |
+| `THUMB_MAX_CONCURRENCY` | `25` | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发；**Docker 镜像内置预设 `25`** |
 | `TIMEOUT_SECONDS` | `6` | 出站请求超时（秒） |
 | `RETRIES` | `3` | 网络错误重试次数 |
 | `BANNED_COOLDOWN_SECONDS` | `1800` | IP 封禁熔断冷却（秒） |

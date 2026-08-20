@@ -7,6 +7,18 @@
 #
 # Developers / offline (ghcr unreachable) builds:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Configuration:
+#
+#   Batch pass-through: every variable documented in .env.example is injected
+#   from the env file below (default: .env in this directory) when present.
+#   Editing .env is the single place to configure — no per-key mapping needed.
+#   Missing/empty .env is fine: the service then starts on defaults (public
+#   content only, mirror ENV presets, environment defaults below).
+#
+#   Custom env file path (both flags must point at the same file so the
+#   ${VAR} interpolation in `environment:` reads the same values as `env_file`):
+#     PANDAPDS_ENV_FILE=/path/mine.env docker compose --env-file=/path/mine.env up -d
 
 services:
   pandaopds:
@@ -14,23 +26,22 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"   # bind to loopback; expose via reverse proxy
+    env_file:
+      # required: false → a missing env file is not an error (service starts
+      # on defaults); present file is injected batch-wise.
+      - path: ${PANDAPDS_ENV_FILE:-.env}
+        required: false
     environment:
-      # --- E-Hentai identity (required) ---
-      IPB_MEMBER_ID: ${IPB_MEMBER_ID:?set in .env}
-      IPB_PASS_HASH: ${IPB_PASS_HASH:?set in .env}
-      EH_SITE: ${EH_SITE:-e-hentai}
-      # --- optional HTTP Basic Auth (both set to enable; /health stays public) ---
-      AUTH_USERNAME: ${AUTH_USERNAME:-}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
-      AUTH_EXEMPT_PATHS: ${AUTH_EXEMPT_PATHS:-}
-      # --- URLs ---
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}   # e.g. https://opds.example.com
-      # --- persistent volumes (must point at the mounted dirs) ---
+      # --- container paths (must point at the mounted volumes; the
+      #     relative-path defaults in .env.example don't apply in-container) ---
       CACHE_DIR: /data/cache
       ARCHIVE_DIR: /data/archives
-      # --- throttling (conservative presets against IP bans; keep unless you know) ---
-      HTML_INTERVAL_SECONDS: ${HTML_INTERVAL_SECONDS:-1.5}
-      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-2}
+      # --- deployment-level switches (.env may override; defaults shown here) ---
+      OPDS_ACQ_DETAIL: ${OPDS_ACQ_DETAIL:-false}   # false=acquisition→image stream; true=→detail doc
+      FAVORITES_SYNC_ARCHIVE: ${FAVORITES_SYNC_ARCHIVE:-0}      # auto-archive new favorites (GP cost!)
+      # --- throttling: conservative presets ship inside the image (Dockerfile
+      #     ENV: 1.5s / 2 / 5 / 25) and are NOT listed here on purpose — keep
+      #     unless you know. Override only via .env (env_file wins over image ENV). ---
     volumes:
       - cache-data:/data/cache
       - archive-data:/data/archives   # persistent GP archive masters
