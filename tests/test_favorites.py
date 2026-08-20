@@ -446,6 +446,14 @@ async def _post(path: str, payload: dict | None = None):
         return await client.post(path, json=payload)
 
 
+async def _get(path: str):
+    from app.main import app
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get(path)
+
+
 @pytest.mark.asyncio
 async def test_route_add_single(tmp_path):
     settings, client, service = make_service(tmp_path)

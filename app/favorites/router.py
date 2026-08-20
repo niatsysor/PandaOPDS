@@ -144,6 +144,19 @@ async def favorites_categories(request: Request):
     }
 
 
+@router.get("/api/favorites/favcats")
+async def favorites_favcats(request: Request):
+    """Flat favcat id -> name map (shortcut-friendly: plain JSON object).
+
+    Same cached data as /api/favorites/categories but shaped as
+    ``{"0": "Favorites", "1": "Common", ...}`` so a quick-action script can
+    look a folder's real name up by id (or list names in id order) without
+    unwrapping an array.
+    """
+    _require_ipb(request)
+    return await _service(request).favorite_categories()
+
+
 @router.get("/api/favorites/sync")
 async def favorites_sync_status(request: Request):
     syncer = _syncer(request)
