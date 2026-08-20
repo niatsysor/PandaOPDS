@@ -43,7 +43,7 @@ docker compose up -d     # 直接拉取预构建镜像，不构建
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-```", "edits"}]
+```
 
 ### 可选配置
 
