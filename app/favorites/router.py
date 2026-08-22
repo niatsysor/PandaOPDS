@@ -118,6 +118,27 @@ async def favorites_action(request: Request, payload: dict):
     results = await _service(request).favorite_action(
         action, items, favcat=favcat, note=note
     )
+    # optimistic sync-state update so GET /api/archive reflects the change immediately
+    ok_keys = {f"{r['gid']}:{r['token']}" for r in results if r.get("ok")}
+    if ok_keys:
+        syncer0 = _syncer(request)
+        state0 = getattr(syncer0, "state", None) if syncer0 is not None else None
+        if state0 is not None:
+            try:
+                if action == "remove":
+                    await state0.discard_keys(ok_keys)
+                else:  # add / move: upsert known + favcats optimistically
+                    # add may be called for not-yet-known galleries
+                    favcat_int = int(favcat) if favcat is not None else None
+                    existing_known = state0.known()
+                    existing_favcats = state0.favcats()
+                    new_known = existing_known | ok_keys
+                    if favcat_int is not None:
+                        for k in ok_keys:
+                            existing_favcats[k] = favcat_int
+                    await state0.update(known=new_known, favcats=existing_favcats)
+            except Exception:
+                pass
     # any successful write → schedule one (debounced, coalesced) background
     # scan so the favorites index / auto-archive catches up immediately
     # instead of waiting for the next periodic tick.

@@ -179,10 +179,20 @@ class FavoritesSyncer:
         new_items = result["new"]
         seen = result["seen"]
         pages = result["pages"]
+        favcat_map: dict[int, str] = result.get("favcat_map") or {}
 
         known = self.state.known() | {f"{g}:{t}" for g, t in seen}
         archived = self.state.archived()
         errors: dict[str, str] = dict(self.state.errors())
+        favcats = dict(self.state.favcats())
+        for item in new_items:
+            fc = getattr(item, "favcat", None)
+            if fc is not None:
+                try:
+                    favcats[f"{item.gid}:{item.token}"] = int(fc)
+                except (TypeError, ValueError):
+                    pass
+        favcats = {k: v for k, v in favcats.items() if k in known}
 
         archived_now: list[str] = []
         # The FIRST run establishes the baseline: it records every scoped
@@ -213,6 +223,8 @@ class FavoritesSyncer:
             known=known,
             archived=archived,
             errors=errors,
+            favcats=favcats,
+            favcat_map=favcat_map,
             baseline=True,
             last_ok=True,
             scanned_pages=pages,

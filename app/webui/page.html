@@ -95,6 +95,44 @@ button.btn { background: var(--bg-3); color: var(--fg); border: 1px solid var(--
 button.btn:hover { background: var(--bg-hover); }
 button.btn.danger { border-color: rgba(248,81,73,.45); color: var(--red); }
 button.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- archive gallery (thumbnail: title / cover / meta) ---- */
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(202px, 1fr)); gap: 14px; }
+.gl-card { display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.gl-card:hover { border-color: #3a4555; }
+.gl-cover-title { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,.08) 22%, rgba(0,0,0,.22) 44%, rgba(0,0,0,.42) 64%, rgba(0,0,0,.68) 84%, rgba(0,0,0,.88) 100%); padding: 52px 10px 10px; }
+.gl-cover-title .glink { font-weight: 700; font-size: 12px; color: #fff; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; line-height: 1.35; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+.gl1e { width: 100%; aspect-ratio: 202 / 280; background: var(--bg-3); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; position: relative; }
+.gl1e img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+.gl1e .no-cover { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--fg-dim); font-size: 12px; background: var(--bg-3); text-align: center; line-height: 1.4; }
+.cover-badge { position: absolute; top: 6px; right: 6px; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; line-height: 1.4; pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.cover-badge.green { background: rgba(63,185,80,.95); color: #fff; }
+.cover-badge.blue { background: rgba(77,159,255,.95); color: #fff; }
+.cover-badge.yellow { background: rgba(210,153,34,.95); color: #fff; }
+.cover-badge.red { background: rgba(248,81,73,.95); color: #fff; }
+.cover-badge.gray { background: rgba(40,48,60,.9); color: var(--fg-dim); }
+.fav-cover { position: absolute; top: 6px; right: 6px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; line-height: 1.4; cursor: pointer; user-select: none; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.fav-cover.fav { background: rgba(77,159,255,.95); color: #fff; border: 1px solid rgba(77,159,255,.9); }
+.fav-cover.not { background: rgba(40,48,60,.9); color: var(--fg-dim); border: 1px solid var(--border); }
+.gl-thumb-meta { display: flex; flex-direction: column; gap: 4px; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); background: var(--bg-2); line-height: 1.3; }
+.meta-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; }
+.meta-bottom { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.meta-stats { display: flex; gap: 8px; align-items: center; white-space: nowrap; overflow: hidden; }
+.meta-stats div { white-space: nowrap; }
+.gl-thumb-meta .cn { padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; color: #fff; background: var(--bg-3); border: 1px solid var(--border); }
+.gl-thumb-meta .ir { width: 80px; height: 16px; display: inline-block; background: url(https://ehgt.org/g/rating.png) no-repeat; flex-shrink: 0; }
+.rating-text { color: #f5c518; font-size: 12px; letter-spacing: 1px; }
+.fav-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: rgba(77,159,255,.15); color: var(--accent); border: 1px solid rgba(77,159,255,.3); cursor: pointer; user-select: none; }
+.fav-badge.not { background: rgba(139,152,165,.12); color: var(--fg-dim); border-color: var(--border); }
+.fav-badge:hover { filter: brightness(1.15); }
+.fav-panel { position: fixed; z-index: 50; min-width: 200px; max-height: min(85vh, 560px); overflow-y: auto; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.fav-panel-title { font-size: 11px; color: var(--fg-dim); padding: 4px 8px 2px; }
+.fav-panel button { text-align: left; background: var(--bg-3); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+.fav-panel button:hover { background: var(--bg-hover); }
+.fav-panel button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.fav-panel button.danger { color: var(--red); border-color: rgba(248,81,73,.4); }
+.fav-panel button.danger:hover { background: rgba(248,81,73,.15); }
+.gl-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-3); justify-content: space-between; }
 </style>
 </head>
 <body>
@@ -146,6 +184,19 @@ button.btn:disabled { opacity: .5; cursor: not-allowed; }
         <div class="stack" id="home-content"><div class="card">加载中…</div></div>
       </section>
     </main>
+  </div>
+</div>
+<div id="fav-panel" class="fav-panel" hidden></div>
+<div id="remove-modal" hidden style="position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;">
+  <div style="position:absolute;inset:0;background:rgba(0,0,0,.55)" onclick="closeRemoveModal()"></div>
+  <div style="position:relative;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:18px 16px;min-width:320px;max-width:90vw;box-shadow:0 12px 32px rgba(0,0,0,.6)">
+    <div style="font-weight:700;margin-bottom:8px" id="remove-modal-title">移除收藏</div>
+    <div class="note" style="margin-bottom:12px">将从 E-Hentai 收藏夹中移除该图库。</div>
+    <label style="display:flex;gap:8px;align-items:center;cursor:pointer;margin-bottom:16px"><input type="checkbox" id="remove-delete-check"> <span>同时删除本地归档（仅删本地，可重下）</span></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeRemoveModal()">取消</button>
+      <button class="btn danger" onclick="confirmRemove()">确认移除</button>
+    </div>
   </div>
 </div>
 
@@ -370,6 +421,22 @@ function archiveBadge(status) {
   return badge(label, cls);
 }
 
+function ratingStyle(r) {
+  if (r == null || r <= 0) return 'background-position:0 -1px;opacity:.3';
+  const half = Math.abs(r - Math.floor(r) - 0.5) < 0.01;
+  const ceilR = half ? Math.ceil(r) : Math.round(r);
+  const x = -(5 - ceilR) * 16;
+  const y = half ? -21 : -1;
+  return 'background-position:' + x + 'px ' + y + 'px';
+}
+function fmtFileSize(b) {
+  if (!b) return '—';
+  if (b >= 1<<30) return (b/(1<<30)).toFixed(2)+' GB';
+  if (b >= 1<<20) return (b/(1<<20)).toFixed(1)+' MB';
+  if (b >= 1024) return (b/1024).toFixed(0)+' KB';
+  return b+' B';
+}
+
 async function loadArchive() {
   if (archiveTimer) { clearTimeout(archiveTimer); archiveTimer = null; }
   const wrap = document.getElementById("archive-content");
@@ -401,31 +468,45 @@ async function loadArchive() {
     + '<div id="arc-quote" style="margin-top:10px"></div>');
 
   const entries = data.entries || [];
-  const rows = entries.map((e) =>
-    "<tr>"
-    + '<td class="mono">' + esc(e.gid) + "</td>"
-    + '<td class="mono">' + esc(e.token) + "</td>"
-    + "<td>" + esc(e.title || "—") + "</td>"
-    + "<td>" + esc(e.quality || "—") + "</td>"
-    + "<td>" + archiveBadge(e.status) + "</td>"
-    + '<td class="mono">' + esc(fmtBytes(e.archive_size || e.part_size)) + "</td>"
-    + "<td>" + (e.page_count ? esc(e.page_count) : "—") + "</td>"
-    + "<td>" + (e.metadata_at ? fmtTime(e.metadata_at) : '<span class="muted">—</span>') + "</td>"
-    + "<td>" + (e.error ? '<div class="err" style="font-size:12px">' + esc(e.error) + "</div>" : "—") + "</td>"
-    + "<td>"
-    + `<button class="btn" onclick="refreshArchive(${e.gid},'${e.token}')">重下</button> `
-    + `<button class="btn" onclick="refreshMetadata(${e.gid},'${e.token}')">更新元数据</button> `
-    + `<button class="btn danger" onclick="deleteArchive(${e.gid},'${e.token}')">删除</button>`
-    + "</td>"
-    + "</tr>"
-  ).join("");
-  const listCard = card("归档列表（" + entries.length + "）",
-    entries.length
-      ? '<table><thead><tr><th>gid</th><th>token</th><th>标题</th><th>档位</th><th>状态</th><th>大小</th><th>页数</th><th>元数据</th><th>错误</th><th>操作</th></tr></thead><tbody>'
-        + rows + "</tbody></table>"
-      : '<span class="muted">暂无归档。输入 gid/token 查询报价后添加。</span>');
+  let gallery = '';
+  if (!entries.length) {
+    gallery = card("归档画廊（0）", '<span class="muted">暂无归档。输入 gid/token 查询报价后添加。</span>');
+  } else {
+    const cards = entries.map((e)=>{
+      const md = e.metadata;
+      // 仅显示单标题：优先 title_jpn（日文原名），为空则回退 title；环境变量暂无偏好设置
+      const title = ((md && md.title_jpn && md.title_jpn.trim()) ? md.title_jpn : ((md && md.title) || e.title || '—'));
+      const cover = e.cover_url
+        ? '<img src="'+esc(e.cover_url)+'" alt="'+esc(title)+'" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"> <div class="no-cover" style="display:none">无封面</div>'
+        : '<div class="no-cover">无封面<br><span class="note">更新元数据可补</span></div>';
+      const cat = md && md.category ? '<div class="cn">'+esc(md.category)+'</div>' : '';
+      const rating = (md && md.rating && md.rating>0) ? '<span class="rating-text" title="'+esc(String(md.rating))+'">★ '+esc(String(md.rating))+'</span>' : '';
+      // 兼容保留 sprite 兜底（若需可切回）： '<div class="ir" style="'+ratingStyle(md.rating)+'" title="'+esc(String(md.rating))+'"></div>'
+      const pages = md && md.filecount ? '<div>'+esc(md.filecount)+' pages</div>' : (e.page_count? '<div>'+esc(e.page_count)+' pages</div>':'');
+      const size = md && md.filesize ? '<div>'+esc(fmtFileSize(md.filesize))+'</div>' : '<div>'+esc(fmtBytes(e.archive_size||e.part_size))+'</div>';
+      const favLabel = e.is_favorited ? (e.favcat_name || '已收藏') : '未收藏';
+      const favCls = e.is_favorited ? 'fav-cover fav' : 'fav-cover not';
+      const favBadge = '<span class="'+favCls+'" onclick="openFavPanel(event,'+e.gid+',\''+esc(e.token)+'\','+(e.favcat!=null?e.favcat:'null')+')">'+esc(favLabel)+'</span>';
+      const statusMap = {ready:["green","可用"],downloading:["blue","下载中"],zipping:["blue","转换中"],pending:["yellow","准备中"],failed:["red","失败"]};
+      const stPair = statusMap[e.status] || ["gray", e.status];
+      const coverTitle = '<div class="gl-cover-title"><div class="glink">'+esc(title)+'</div></div>';
+      const coverWithBadge = '<div class="gl1e">'+cover+coverTitle+favBadge+'</div>';
+      const statusBadge = '<span class="badge '+stPair[0]+'">'+esc(stPair[1])+'</span>';
+      const err = e.error ? '<div class="err" style="font-size:11px;margin-top:6px">'+esc(e.error)+'</div>' : '';
+      const statsRow = '<div class="meta-stats">'+pages+size+'</div>';
+      return '<div class="gl-card">'
+        + coverWithBadge
+        + '<div class="gl-thumb-meta"><div class="meta-top"><span style="display:flex;gap:6px;align-items:center">'+cat+rating+'</span>'+statusBadge+'</div><div class="meta-bottom">'+statsRow+'</div>'+err+'</div>'
+        + '<div class="gl-actions">'
+            + '<button class="btn" onclick="refreshMetadata('+e.gid+',\''+esc(e.token)+'\')">更新元数据</button>'
+            + '<button class="btn danger" onclick="deleteArchive('+e.gid+',\''+esc(e.token)+'\')">删除</button>'
+        + '</div>'
+      + '</div>';
+    }).join('');
+    gallery = card("归档画廊（"+entries.length+"）", '<div class="gallery">'+cards+'</div>');
+  }
 
-  wrap.innerHTML = statCard + addCard + listCard;
+  wrap.innerHTML = statCard + addCard + gallery;
   const view = document.getElementById("view-archive");
   if (view && !view.hidden) archiveTimer = setTimeout(loadArchive, 10000);
 }
@@ -533,6 +614,86 @@ async function refreshMetadata(gid, token) {
   }
   loadArchive();
 }
+
+let _removePending = null;
+function openRemoveModal(gid, token) { _removePending = {gid, token}; const m=$("#remove-modal"); const t=$("#remove-modal-title"); if(t) t.textContent = "移除收藏 "+gid+" ?"; const c=$("#remove-delete-check"); if(c) c.checked=false; if(m) m.hidden=false; }
+function closeRemoveModal() { const m=$("#remove-modal"); if(m) m.hidden=true; _removePending=null; }
+async function confirmRemove() {
+  if(!_removePending) return;
+  const {gid, token} = _removePending;
+  const delChecked = !!$("#remove-delete-check")?.checked;
+  closeRemoveModal();
+  try {
+    const r = await fetch("/api/favorites", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ action: "remove", gid: Number(gid), token: token }) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) { alert("移除收藏失败：" + (j.detail || j.error || "HTTP "+r.status)); return; }
+    if (!j.ok && j.items && j.items[0] && j.items[0].error) { alert("移除失败："+j.items[0].error); return; }
+  } catch (e) { alert("移除收藏失败："+e); return; }
+  if (delChecked) {
+    try { const r2 = await fetch("/api/archive/"+gid+"/"+token, { method: "DELETE", headers: { "Accept": "application/json" }}); if (!r2.ok) alert("归档删除失败：HTTP "+r2.status); } catch (e) { alert("归档删除失败："+e); }
+  }
+  loadArchive();
+}
+async function removeFavorite(gid, token) {
+  closeFavPanel();
+  openRemoveModal(gid, token);
+}
+let _favCats = null;
+async function ensureFavCats() {
+  if (_favCats) return _favCats;
+  try {
+    const j = await getJSON("/api/favorites/categories");
+    _favCats = j.categories || [];
+  } catch (e) {
+    // fallback to sync state's favcat_map via /api/status or keep empty
+    _favCats = [];
+  }
+  return _favCats;
+}
+function closeFavPanel() { const p=$("#fav-panel"); if(p) p.hidden=true; }
+async function openFavPanel(ev, gid, token, curFavcat) {
+  ev.stopPropagation();
+  const panel = $("#fav-panel");
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const cats = await ensureFavCats();
+  let html = '<div class="fav-panel-title">收藏夹</div>';
+  if (!cats.length) {
+    html += '<div class="note" style="padding:4px 8px">无可用分类（未登录？）</div>';
+  } else {
+    for (const c of cats) {
+      const active = (curFavcat!=null && c.id===curFavcat) ? ' class="active"' : '';
+      html += '<button'+active+' onclick="moveFavorite('+gid+',\''+esc(token)+'\','+c.id+','+(curFavcat!=null?curFavcat:'null')+')">'+esc(c.id+': '+c.name)+'</button>';
+    }
+  }
+  html += '<div style="height:1px;background:var(--border);margin:4px 0"></div>';
+  html += '<button class="danger" onclick="removeFavorite('+gid+',\''+esc(token)+'\')">移除收藏</button>';
+  panel.innerHTML = html;
+  panel.hidden = false;
+  // 位于按钮右侧偏上，视口内自动贴边
+  const pw = panel.offsetWidth, ph = panel.offsetHeight;
+  let left = rect.right + 8;
+  let top = rect.top - 16; // 偏上 16px
+  // 右侧溢出则改左侧
+  if (left + pw > window.innerWidth - 8) left = rect.left - pw - 8;
+  if (left < 8) left = 8;
+  // 垂直贴边
+  if (top + ph > window.innerHeight - 8) top = window.innerHeight - ph - 8;
+  if (top < 8) top = 8;
+  panel.style.left = left + 'px';
+  panel.style.top = top + 'px';
+}
+async function moveFavorite(gid, token, favcat, curFavcat) {
+  closeFavPanel();
+  const action = (curFavcat==null ? "add" : "move");
+  try {
+    const r = await fetch("/api/favorites", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ action: action, gid: Number(gid), token: token, favcat: favcat }) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || !j.ok) { alert("移动失败：" + (j.detail || (j.items&&j.items[0]&&j.items[0].error) || "HTTP "+r.status)); return; }
+  } catch (e) { alert("移动失败："+e); return; }
+  loadArchive();
+}
+// close panel on outside click / scroll
+document.addEventListener("click", (e)=>{ const p=$("#fav-panel"); if(!p||p.hidden) return; if(!p.contains(e.target) && !e.target.closest(".fav-cover") && !e.target.closest(".fav-badge")) p.hidden=true; });
 
 async function deleteArchive(gid, token) {
   if (!confirm("删除归档 " + gid + "？\n仅删除本地文件；E-Hentai 账户上的归档记录保留，可随时重新下载（不消耗 GP）。")) return;

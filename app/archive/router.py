@@ -18,6 +18,7 @@ account archive record stays, so refresh/start re-downloads spend no GP.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 
 router = APIRouter(tags=["archive"])
 
@@ -29,7 +30,18 @@ def _manager(request: Request):
 @router.get("/api/archive")
 async def archive_list(request: Request):
     m = _manager(request)
-    return {"entries": m.list_entries(), "stats": m.stats()}
+    # Enriched gallery cards: local metadata + cover_url + favorites badge
+    fav_state = getattr(request.app.state, "favorites", None)
+    fav_state_obj = getattr(fav_state, "state", None) if fav_state is not None else None
+    favcat_map: dict[int, str] | None = None
+    # Try live favcat map (long-lived cache with fallback inside manager)
+    try:
+        svc = request.app.state.service
+        favcat_map = await svc.favorite_categories()  # cached 10min, fallback inside manager
+    except Exception:
+        favcat_map = None
+    entries = m.list_entries_enriched(fav_state_obj, favcat_map)
+    return {"entries": entries, "stats": m.stats()}
 
 
 @router.get("/api/archive/{gid}/{token}/quote")
@@ -51,6 +63,16 @@ async def archive_status(request: Request, gid: int, token: str):
     if status is None or status.get("status") == "absent":
         raise HTTPException(status_code=404, detail="no archive entry for this gallery")
     return status
+
+
+@router.get("/api/archive/{gid}/{token}/cover")
+async def archive_cover(request: Request, gid: int, token: str):
+    """Serve the persisted cover.jpg (404 when missing)."""
+    data_mime = _manager(request).get_cover_bytes(gid, token)
+    if data_mime is None:
+        raise HTTPException(status_code=404, detail="no cover for this gallery")
+    data, mime = data_mime
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/api/archive/{gid}/{token}/metadata")

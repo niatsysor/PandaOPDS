@@ -77,6 +77,28 @@ class FavoritesSyncState:
     def errors(self) -> dict[str, str]:
         return dict(self._data.get("errors") or {})
 
+    def favcats(self) -> dict[str, int]:
+        """Per-gallery favcat id (gid:token -> favcat)."""
+        raw = self._data.get("favcats") or {}
+        out: dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                out[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def favcat_map(self) -> dict[int, str]:
+        """Long-lived favcat id -> name cache (fallback when upstream fails)."""
+        raw = self._data.get("favcat_map") or {}
+        out: dict[int, str] = {}
+        for k, v in raw.items():
+            try:
+                out[int(k)] = str(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def baseline_established(self) -> bool:
         """True once the first (baseline) scan has completed."""
         return bool(self._data.get("baseline", False))
@@ -94,9 +116,36 @@ class FavoritesSyncState:
 
     # -- mutations ---------------------------------------------------------
 
+    async def discard_keys(self, keys: set[str]) -> bool:
+        """Remove keys from known/archived/errors/favcats (immediate prune after unfavorite).
+
+        Returns True if anything was removed."""
+        async with self._lock:
+            known = set(self._data.get("known") or [])
+            archived = set(self._data.get("archived") or [])
+            errors = dict(self._data.get("errors") or {})
+            favcats = dict(self._data.get("favcats") or {})
+            before = (len(known), len(archived), len(errors), len(favcats))
+            known -= keys
+            archived -= keys
+            for k in keys:
+                errors.pop(k, None)
+                favcats.pop(k, None)
+            if (len(known), len(archived), len(errors), len(favcats)) == before:
+                return False
+            self._data["known"] = sorted(known)
+            self._data["archived"] = sorted(archived)
+            self._data["errors"] = errors
+            self._data["favcats"] = favcats
+            self._data["last_run"] = time.time()
+            await self._atomic_write()
+            return True
+
     async def update(self, *, known: set[str] | None = None,
                      archived: set[str] | None = None,
                      errors: dict[str, str] | None = None,
+                     favcats: dict[str, int] | None = None,
+                     favcat_map: dict[int, str] | None = None,
                      baseline: bool | None = None,
                      last_ok: bool | None = None,
                      scanned_pages: int | None = None) -> None:
@@ -108,6 +157,13 @@ class FavoritesSyncState:
                 self._data["archived"] = sorted(archived)
             if errors is not None:
                 self._data["errors"] = errors
+            if favcats is not None:
+                self._data["favcats"] = {str(k): int(v) for k, v in favcats.items()}
+            if favcat_map is not None:
+                # merge, long-lived cache
+                cur = self.favcat_map()
+                cur.update({int(k): str(v) for k, v in favcat_map.items()})
+                self._data["favcat_map"] = {str(k): v for k, v in cur.items()}
             if baseline is not None:
                 self._data["baseline"] = baseline
             if last_ok is not None:
