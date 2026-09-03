@@ -1,0 +1,18 @@
+{
+  "name": "pandaopds-workers",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev src/index.js",
+    "deploy": "wrangler deploy",
+    "check": "node --check src/index.js",
+    "dry-run": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "linkedom": "^0.18.12"
+  },
+  "devDependencies": {
+    "wrangler": "^3.114.0"
+  }
+}

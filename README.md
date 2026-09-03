@@ -56,24 +56,31 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 - **分类筛选（facets）**：`FACETS` 环境变量，格式 `名称:排除掩码`，逗号分隔（如 `FACETS=纯本子:1021,漫画:1019`）。
 - **不提供 IPB cookie**：服务照常运行，公开内容（Latest / Popular / Toplist / Search）可用，仅 Watched / Favorites 导航项不输出。
 
+### Cloudflare Workers 版
+
+如果你只需要无状态的读代理路径（OPDS、图片代理、详情页与流式阅读），可以直接使用 `workers/` 下的新子项目：
+
+- 不包含归档、周期扫描、磁盘缓存和长期后台任务。
+- 适合部署到 Cloudflare Workers，使用边缘缓存替代本地状态。
+- 入口说明见 [`workers/README.md`](workers/README.md)。
+
 ## WebUI
 
 内置一个轻量管理界面，用于**查看**当前配置与运行状态（当前阶段只读，编辑能力后续迭代）：
 
-| 路由 | 说明 |
-|------|------|
-| `GET /` | 单页界面：仪表盘（状态/熔断器/请求计数/缓存）+ 环境变量配置 + 首页布局（挂载于根目录） |
-| `GET /api/status` | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源 |
-| `GET /api/config` | JSON：全量生效配置（分组），凭据类字段服务端脱敏 |
-| `GET /api/home` | JSON：home.toml 布局（groups/sections、来源标记、解析错误） |
-| `GET /api/archive` | JSON：归档列表 + 统计 |
-| `GET /api/archive/{gid}/{token}/quote` | 归档报价（标题/画质/GP 价格，不扣 GP） |
-| `POST /api/archive/{gid}/{token}/start` | 购买并开始归档任务（消耗 GP；已购直接重下） |
-| `GET/DELETE /api/archive/{gid}/{token}` | 单条状态 / 删除本地归档 |
-| `POST /api/archive/{gid}/{token}/refresh` | 重新下载（不扣 GP） |
+| 路由                                        | 说明                                                                                   |
+| ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `GET /`                                   | 单页界面：仪表盘（状态/熔断器/请求计数/缓存）+ 环境变量配置 + 首页布局（挂载于根目录） |
+| `GET /api/status`                         | JSON：服务状态、熔断器、节流计数、缓存统计、首页来源                                   |
+| `GET /api/config`                         | JSON：全量生效配置（分组），凭据类字段服务端脱敏                                       |
+| `GET /api/home`                           | JSON：home.toml 布局（groups/sections、来源标记、解析错误）                            |
+| `GET /api/archive`                        | JSON：归档列表 + 统计                                                                  |
+| `GET /api/archive/{gid}/{token}/quote`    | 归档报价（标题/画质/GP 价格，不扣 GP）                                                 |
+| `POST /api/archive/{gid}/{token}/start`   | 购买并开始归档任务（消耗 GP；已购直接重下）                                            |
+| `GET/DELETE /api/archive/{gid}/{token}`   | 单条状态 / 删除本地归档                                                                |
+| `POST /api/archive/{gid}/{token}/refresh` | 重新下载（不扣 GP）                                                                    |
 
 - **归档（Archiver）**：WebUI 的「归档」视图通过上述 API 管理 GP 购买的持久归档——输入图库 URL 查询报价 → 选画质确认 → 后台下载统一保存为 zip（cbz）母本于 `ARCHIVE_DIR`，`/stream` 对该图库直接读归档页（长效缓存，不受磁盘 LRU/7 天 TTL 约束）。需登录态与星会员；未解锁档消耗 GP，请确认后操作。
-
 - 前端为单 HTML（内联 CSS/JS，无构建链、无 CDN 依赖），消费上述 JSON API；未来功能（离线项目管理、自动化工作流）扩展 API 层即可，页面契约不变。
 - **安全**：`IPB_PASS_HASH` / `IGNEOUS` 永不回传明文（页面与 API 均只显示占位符）。`IPB_MEMBER_ID` 为登录标识，会完整展示。
 - WebUI 不触达 E-Hentai，仅读取内存状态；服务配置异常时页面照常可访问并显示错误详情。
@@ -81,44 +88,44 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ## 环境变量
 
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `IPB_MEMBER_ID` | 空 | 登录 cookie（**可选**：不填则仅公开内容，Watched/Favorites 不可用） |
-| `IPB_PASS_HASH` | 空 | 登录 cookie（与 IPB_MEMBER_ID 成对提供） |
-| `EH_SITE` | `e-hentai` | `e-hentai` \| `exhentai` |
-| `IGNEOUS` | 空 | 可选会话种子；exhentai 会话建立时自动下发，无需用户提供 |
-| `NW` | `1` | 绕过 Offensive For Everyone 警告 |
-| `DATATAGS` | `1` | 启用新缩略图结构 |
-| `PUBLIC_BASE_URL` | 空 | 设置后 feed 输出绝对 URL，如 `https://opds.example.com` |
-| `CACHE_DIR` | `./cache` | 图片磁盘缓存目录 |
-| `CACHE_MAX_GB` | `4` | 磁盘缓存上限（GB） |
-| `IMAGE_CACHE_ENABLED` | `true` | 设为 `false` 关闭磁盘缓存 |
-| `ARCHIVE_DIR` | `./archives` | 归档持久目录（zip 母本 + meta.json；建议独立卷） |
-| `ARCHIVE_QUALITY` | `original` | 默认画质档（start 未传 quality 时） |
-| `ARCHIVE_DOWNLOAD_CONCURRENCY` | `5` | 归档下载/7z 转换并发上限，其余排队 |
-| `HTML_INTERVAL_SECONDS` | `0.3` | HTML 出站请求最小间隔（秒），防封关键；**compose/Docker 镜像推荐保守值 `1.5`**（单用户自用可安全尝试 `0.3`，在 .env 设置） |
-| `MAX_CONCURRENCY` | `5` | HTML/API 出站并发上限（防封关键路径）；**compose/Docker 镜像推荐保守值 `2`**（单用户自用可安全尝试 `5`） |
-| `IMAGE_MAX_CONCURRENCY` | `5` | 全图（`/stream` 原图）并发上限：509 配额流量，保守 |
-| `THUMB_MAX_CONCURRENCY` | `25` | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发 |
-| `TIMEOUT_SECONDS` | `6` | 出站请求超时（秒） |
-| `RETRIES` | `3` | 网络错误重试次数 |
-| `BANNED_COOLDOWN_SECONDS` | `1800` | IP 封禁熔断冷却（秒） |
-| `EXCEED_COOLDOWN_SECONDS` | `300` | 图片限额熔断冷却（秒） |
-| `PSE_PAGE_BASE` | `1` | PSE 页码基数：`1`（1-based，默认）或 `0`（OPDS-PSE 规范原文 0-based） |
-| `TAG_STATUS_FILTER` | `balanced` | 标签可信度过滤：`balanced`（默认，confidence+skepticism）、`strict`（仅 confidence）、`off`（全部保留） |
-| `TAG_TRANSLATION_ENABLED` | `0` | 中文标签翻译（[EhTagTranslation/Database](https://github.com/EhTagTranslation/Database) 词典）：`1` 启用后 OPDS 2.0 subject 输出中文译名、搜索支持中文标签反查；关闭时零行为变化 |
-| `TAG_TRANSLATION_URL` | release latest `db.text.json` | 词典下载地址，可指向自镜像 |
-| `TAG_TRANSLATION_INTERVAL_SECONDS` | `86400` | 后台刷新间隔（秒）；`0` = 仅启动时拉取一次 |
-| `TAG_TRANSLATION_STATE` | `./tag_translation.json` | 磁盘快照路径（删除后下次刷新重新下载） |
-| `FACETS` | 内置 10 分类 | OPDS 2.0 分类筛选，格式 `名称:掩码,名称:掩码` |
-| `EH_PROFILE` | `PandaOPDS` | E-Hentai uconfig 独立 profile 名；设空串关闭 |
-| `HOME_CONFIG` | `./config/home.toml` | OPDS 2.0 首页布局配置文件路径 |
-| `AUTH_USERNAME` | 空 | 可选 Basic Auth 用户名；与 `AUTH_PASSWORD` **同时设置**才启用 |
-| `AUTH_PASSWORD` | 空 | 可选 Basic Auth 密码（明文，脱敏显示；仅建议 HTTPS 反代下启用） |
-| `AUTH_EXEMPT_PATHS` | 空 | 逗号分隔的精确路径，认证下仍公开；`/health` 恒豁免 |
-| `AUTH_EXEMPT_PREFIXES` | 空 | 逗号分隔的路径**前缀**，命中即公开；浏览器 `<img>`/`url()` 无法携带认证头，评论封面代理建议 `AUTH_EXEMPT_PATHS=/image/fetch` |
-| `IMAGE_PROXY_HOSTS` | `ehgt.org,s.exhentai.org` | 评论封面/预览图代理（`/image/fetch`）host 白名单，逗号分隔、强制 https；新封面 host 加此免发版 |
-| `LOG_LEVEL` | `INFO` | `INFO` \| `DEBUG`（DEBUG 输出每次出站请求，用于排障） |
+| 变量                                 | 默认                           | 说明                                                                                                                                                                              |
+| ------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IPB_MEMBER_ID`                    | 空                             | 登录 cookie（**可选**：不填则仅公开内容，Watched/Favorites 不可用）                                                                                                         |
+| `IPB_PASS_HASH`                    | 空                             | 登录 cookie（与 IPB_MEMBER_ID 成对提供）                                                                                                                                          |
+| `EH_SITE`                          | `e-hentai`                   | `e-hentai` \| `exhentai`                                                                                                                                                      |
+| `IGNEOUS`                          | 空                             | 可选会话种子；exhentai 会话建立时自动下发，无需用户提供                                                                                                                           |
+| `NW`                               | `1`                          | 绕过 Offensive For Everyone 警告                                                                                                                                                  |
+| `DATATAGS`                         | `1`                          | 启用新缩略图结构                                                                                                                                                                  |
+| `PUBLIC_BASE_URL`                  | 空                             | 设置后 feed 输出绝对 URL，如`https://opds.example.com`                                                                                                                          |
+| `CACHE_DIR`                        | `./cache`                    | 图片磁盘缓存目录                                                                                                                                                                  |
+| `CACHE_MAX_GB`                     | `4`                          | 磁盘缓存上限（GB）                                                                                                                                                                |
+| `IMAGE_CACHE_ENABLED`              | `true`                       | 设为`false` 关闭磁盘缓存                                                                                                                                                        |
+| `ARCHIVE_DIR`                      | `./archives`                 | 归档持久目录（zip 母本 + meta.json；建议独立卷）                                                                                                                                  |
+| `ARCHIVE_QUALITY`                  | `original`                   | 默认画质档（start 未传 quality 时）                                                                                                                                               |
+| `ARCHIVE_DOWNLOAD_CONCURRENCY`     | `5`                          | 归档下载/7z 转换并发上限，其余排队                                                                                                                                                |
+| `HTML_INTERVAL_SECONDS`            | `0.3`                        | HTML 出站请求最小间隔（秒），防封关键；**compose/Docker 镜像推荐保守值 `1.5`**（单用户自用可安全尝试 `0.3`，在 .env 设置）                                              |
+| `MAX_CONCURRENCY`                  | `5`                          | HTML/API 出站并发上限（防封关键路径）；**compose/Docker 镜像推荐保守值 `2`**（单用户自用可安全尝试 `5`）                                                                |
+| `IMAGE_MAX_CONCURRENCY`            | `5`                          | 全图（`/stream` 原图）并发上限：509 配额流量，保守                                                                                                                              |
+| `THUMB_MAX_CONCURRENCY`            | `25`                         | 封面图/缩略图（ehgt CDN）并发上限：对齐浏览器在源站 25 缩略图并发                                                                                                                 |
+| `TIMEOUT_SECONDS`                  | `6`                          | 出站请求超时（秒）                                                                                                                                                                |
+| `RETRIES`                          | `3`                          | 网络错误重试次数                                                                                                                                                                  |
+| `BANNED_COOLDOWN_SECONDS`          | `1800`                       | IP 封禁熔断冷却（秒）                                                                                                                                                             |
+| `EXCEED_COOLDOWN_SECONDS`          | `300`                        | 图片限额熔断冷却（秒）                                                                                                                                                            |
+| `PSE_PAGE_BASE`                    | `1`                          | PSE 页码基数：`1`（1-based，默认）或 `0`（OPDS-PSE 规范原文 0-based）                                                                                                         |
+| `TAG_STATUS_FILTER`                | `balanced`                   | 标签可信度过滤：`balanced`（默认，confidence+skepticism）、`strict`（仅 confidence）、`off`（全部保留）                                                                     |
+| `TAG_TRANSLATION_ENABLED`          | `0`                          | 中文标签翻译（[EhTagTranslation/Database](https://github.com/EhTagTranslation/Database) 词典）：`1` 启用后 OPDS 2.0 subject 输出中文译名、搜索支持中文标签反查；关闭时零行为变化 |
+| `TAG_TRANSLATION_URL`              | release latest`db.text.json` | 词典下载地址，可指向自镜像                                                                                                                                                        |
+| `TAG_TRANSLATION_INTERVAL_SECONDS` | `86400`                      | 后台刷新间隔（秒）；`0` = 仅启动时拉取一次                                                                                                                                      |
+| `TAG_TRANSLATION_STATE`            | `./tag_translation.json`     | 磁盘快照路径（删除后下次刷新重新下载）                                                                                                                                            |
+| `FACETS`                           | 内置 10 分类                   | OPDS 2.0 分类筛选，格式`名称:掩码,名称:掩码`                                                                                                                                    |
+| `EH_PROFILE`                       | `PandaOPDS`                  | E-Hentai uconfig 独立 profile 名；设空串关闭                                                                                                                                      |
+| `HOME_CONFIG`                      | `./config/home.toml`         | OPDS 2.0 首页布局配置文件路径                                                                                                                                                     |
+| `AUTH_USERNAME`                    | 空                             | 可选 Basic Auth 用户名；与`AUTH_PASSWORD` **同时设置**才启用                                                                                                              |
+| `AUTH_PASSWORD`                    | 空                             | 可选 Basic Auth 密码（明文，脱敏显示；仅建议 HTTPS 反代下启用）                                                                                                                   |
+| `AUTH_EXEMPT_PATHS`                | 空                             | 逗号分隔的精确路径，认证下仍公开；`/health` 恒豁免                                                                                                                              |
+| `AUTH_EXEMPT_PREFIXES`             | 空                             | 逗号分隔的路径**前缀**，命中即公开；浏览器 `<img>`/`url()` 无法携带认证头，评论封面代理建议 `AUTH_EXEMPT_PATHS=/image/fetch`                                          |
+| `IMAGE_PROXY_HOSTS`                | `ehgt.org,s.exhentai.org`    | 评论封面/预览图代理（`/image/fetch`）host 白名单，逗号分隔、强制 https；新封面 host 加此免发版                                                                                  |
+| `LOG_LEVEL`                        | `INFO`                       | `INFO` \| `DEBUG`（DEBUG 输出每次出站请求，用于排障）                                                                                                                         |
 
 完整路由与客户端接入细节见 [AGENTS.md](AGENTS.md)。
 

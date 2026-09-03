@@ -1,0 +1,53 @@
+name = "pandaopds-workers"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+minify = true
+observability = { enabled = true }
+
+[vars]
+EH_SITE = "e-hentai"
+NW = "1"
+DATATAGS = "1"
+EH_PROFILE = "PandaOPDS"
+PSE_PAGE_BASE = "1"
+HTML_INTERVAL_SECONDS = "0.3"
+MAX_CONCURRENCY = "5"
+IMAGE_MAX_CONCURRENCY = "5"
+THUMB_MAX_CONCURRENCY = "25"
+LIST_CACHE_TTL_SECONDS = "600"
+DETAIL_CACHE_TTL_SECONDS = "3600"
+IMAGE_CACHE_TTL_SECONDS = "604800"
+IMAGE_PROXY_HOSTS = "ehgt.org,s.exhentai.org"
+FACETS = "Doujinshi:1021,Manga:1019,Artist CG:1015,Game CG:1007,Western:991,Non-H:959,Image Set:895,Cosplay:767,Asian Porn:511,Misc:1022"
+OPDS_ACQ_DETAIL = "false"
+TAG_STATUS_FILTER = "balanced"
+COMMENTS_ENABLED = "true"
+TAG_TRANSLATION_ENABLED = "false"
+TAG_TRANSLATION_URL = "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"
+TAG_TRANSLATION_INTERVAL_SECONDS = "86400"
+MYTAGS_TTL_SECONDS = "21600"
+BANNED_COOLDOWN_SECONDS = "1800"
+EXCEED_COOLDOWN_SECONDS = "300"
+FAVORITES_BATCH_JITTER_MS = "0"
+HOME_CONFIG_TOML = ""
+
+[[durable_objects.bindings]]
+name = "EH_STATE"
+class_name = "EhPersistentState"
+
+[[durable_objects.bindings]]
+name = "EH_LIMITER"
+class_name = "EhLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EhPersistentState", "EhLimiter"]
+
+[[kv_namespaces]]
+binding = "EH_CACHE"
+# Replace these placeholder ids with the real namespace ids created by `wrangler kv namespace create EH_CACHE`.
+id = "11111111-1111-1111-1111-111111111111"
+preview_id = "11111111-1111-1111-1111-111111111111"
+

@@ -14,11 +14,14 @@ htmlcov/
 .ruff_cache/
 .pyright/
 .hypothesis/
+.wrangler/
+node_modules/
 
 # Environment (keep the example template)
 .env
 .env.*
 !.env.example
+.dev.vars
 
 # Runtime data — NOTE: anchored to the repo root only; app/cache/ is source
 # code (disk/memory cache layers) and must stay tracked.
